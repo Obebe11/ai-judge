@@ -11,7 +11,7 @@ __id__ = "ai_judge"
 __name__ = "ИИ Судья"
 __description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав. Стелс-мод + тесты."
 __author__ = "@you"
-__version__ = "1.0.13"
+__version__ = "1.0.14"
 __icon__ = "exteraPlugins/1"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.0"
@@ -268,11 +268,10 @@ class AIJudgePlugin(BasePlugin):
             self.__class__._log_buffer = self._log_buffer
             if "err" in msg.lower() or "fail" in msg.lower() or "❌" in msg or "error" in msg.lower():
                 self._last_error = msg
-            # пробуем писать на диск для переживания рестарта (не критично)
+            # пишем на диск для txt просмотра
             try:
-                from file_utils import get_data_dir
-                import pathlib
-                p = pathlib.Path(get_data_dir()) / "ai_judge_logs.txt"
+                p = self._get_log_file()
+                p.parent.mkdir(parents=True, exist_ok=True)
                 with open(p, "a", encoding="utf-8") as f:
                     f.write(entry + "\n")
             except:
@@ -282,33 +281,116 @@ class AIJudgePlugin(BasePlugin):
 
     def _get_logs_text(self, n=50):
         buf = getattr(self, "_log_buffer", []) or []
-        if not buf:
-            # пробуем с диска
+        if buf:
+            return "\n".join(buf[-n:])
+        # пробуем с диска
+        try:
+            p = self._get_log_file()
+            if p.exists():
+                lines = p.read_text(encoding="utf-8").splitlines()[-n:]
+                return "\n".join(lines) if lines else "лог пуст"
+        except:
+            pass
+        return "лог пуст (ещё нет событий)"
+
+    def _get_log_file(self):
+        """Надёжный путь к ai_judge_logs.txt — пробует data/cache/files + /tmp"""
+        import pathlib
+        candidates = []
+        try:
+            from file_utils import get_data_dir
             try:
-                from file_utils import get_data_dir
-                import pathlib
-                p = pathlib.Path(get_data_dir()) / "ai_judge_logs.txt"
-                if p.exists():
-                    lines = p.read_text(encoding="utf-8").splitlines()[-n:]
-                    return "\n".join(lines) if lines else "лог пуст"
+                candidates.append(pathlib.Path(get_data_dir()))
             except:
                 pass
-            return "лог пуст (ещё нет событий)"
-        return "\n".join(buf[-n:])
+        except:
+            pass
+        try:
+            from file_utils import get_cache_dir
+            try:
+                candidates.append(pathlib.Path(get_cache_dir()))
+            except:
+                pass
+        except:
+            pass
+        try:
+            import os
+            candidates.append(pathlib.Path("/data/data/com.radolyn.ayugram/files"))
+            candidates.append(pathlib.Path("/data/data/com.exteragram.messenger/files"))
+            candidates.append(pathlib.Path("/tmp"))
+        except:
+            pass
+        for d in candidates:
+            try:
+                if d and d.exists():
+                    return d / "ai_judge_logs.txt"
+            except:
+                pass
+        # fallback
+        import pathlib, tempfile
+        return pathlib.Path(tempfile.gettempdir()) / "ai_judge_logs.txt"
 
     def _clear_logs(self):
         self._log_buffer = []
         self.__class__._log_buffer = []
         self._last_error = ""
         try:
-            from file_utils import get_data_dir
-            import pathlib
-            p = pathlib.Path(get_data_dir()) / "ai_judge_logs.txt"
+            p = self._get_log_file()
             if p.exists():
                 p.write_text("", encoding="utf-8")
         except:
             pass
         self.log("логи очищены")
+
+    def _send_logs_as_file(self, account, target, n=200):
+        """Отправляет логи как txt файл — нормально смотрится в любом клиенте"""
+        import pathlib
+        try:
+            p = self._get_log_file()
+            # обновляем файл из буфера
+            try:
+                buf = getattr(self, "_log_buffer", []) or []
+                if buf:
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    p.write_text("\n".join(buf[-n:]), encoding="utf-8")
+                elif not p.exists():
+                    p.write_text("лог пуст", encoding="utf-8")
+            except Exception as e:
+                self.log(f"write log file err {e}")
+            # пробуем отправить как документ
+            if p.exists():
+                try:
+                    from client_utils import send_message, send_text
+                    # пробуем через send_message с path/document
+                    for kwargs in [
+                        {"peer": target, "message": f"📄 Логи ИИ Судьи — {n} строк", "path": str(p), "document": str(p)},
+                        {"peer": target, "message": f"📄 Логи ИИ Судьи — {n} строк", "path": str(p)},
+                        {"peer": target, "message": f"📄 Логи ИИ Судьи", "document": str(p)},
+                    ]:
+                        try:
+                            # send_message может требовать account=
+                            try:
+                                send_message(kwargs, account=account)
+                            except TypeError:
+                                send_message(kwargs)
+                            self.log(f"логи отправлены файлом {p} -> {target}")
+                            return True
+                        except Exception as e:
+                            self.log(f"send logs file try fail {e} kwargs={kwargs}")
+                            continue
+                    # fallback: читаем и шлём кусками как текст
+                    txt = p.read_text(encoding="utf-8")[-8000:]
+                    self._safe_send(account, target, f"📄 Логи (файл не отправился, шлю текстом):\n<code>{txt.replace('<','&lt;')[-3500:]}</code>", None, parse_mode="HTML")
+                    return False
+                except Exception as e:
+                    self.log(f"send logs file err {e}")
+                    return False
+            else:
+                self._safe_send(account, target, "❌ Лог файл не найден", None, parse_mode="HTML")
+                return False
+        except Exception as e:
+            self.log(f"_send_logs_as_file err {e}")
+            return False
 
     def on_plugin_load(self):
         self._last_error = ""
@@ -596,7 +678,7 @@ class AIJudgePlugin(BasePlugin):
                 return self._clear_and_cancel(params, attr)
 
             if re.match(r"^[\.\/!](суд|court|judge)\s+логи\b", raw, re.IGNORECASE):
-                # .суд логи [N] [очистить] — передача буфера
+                # .суд логи [N] [txt|файл] [очистить] — передача буфера
                 m = re.match(r"^[\.\/!](?:суд|court|judge)\s+логи\s*(.*)$", raw, re.IGNORECASE | re.DOTALL)
                 rest = (m.group(1).strip() if m else "").lower()
                 if rest in ("очистить", "clear", "очистка", "reset"):
@@ -609,6 +691,32 @@ class AIJudgePlugin(BasePlugin):
                         BulletinHelper.show_info("Логи очищены")
                     except:
                         pass
+                    return self._clear_and_cancel(params, attr)
+                # txt / файл — отправить как txt файл (нормально смотрится)
+                if any(x in rest for x in ("txt", "файл", "file", "тхт", "документ")):
+                    n = 200
+                    mm = re.search(r"\b(\d{1,3})\b", rest)
+                    if mm:
+                        try:
+                            v = int(mm.group(1))
+                            if 5 <= v <= 300:
+                                n = v
+                        except:
+                            pass
+                    sp = self._get_saved_peer(account)
+                    target = sp or getattr(params, "peer", None)
+                    if target:
+                        ok = self._send_logs_as_file(account, target, n)
+                        if not ok:
+                            # fallback уже внутри _send_logs_as_file шлёт текстом
+                            pass
+                    else:
+                        try:
+                            from ui.bulletin import BulletinHelper
+                            BulletinHelper.show_info("Нет Saved peer для логов txt")
+                        except:
+                            pass
+                    self.log(f"логи txt запрошены n={n} target={target}")
                     return self._clear_and_cancel(params, attr)
                 # число в конце — сколько строк
                 n = 50
@@ -628,10 +736,9 @@ class AIJudgePlugin(BasePlugin):
                 # шлём в Saved по возможности
                 sp = self._get_saved_peer(account)
                 target = sp or getattr(params, "peer", None)
-                header = f"📜 <b>Логи ИИ Судьи</b> — последние {n} (всего {len(getattr(self,'_log_buffer',[]))})\n<code>.суд логи очистить</code> — очистить\n<code>.суд логи 100</code> — показать 100\n\n"
+                header = f"📜 <b>Логи ИИ Судьи</b> — последние {n} (всего {len(getattr(self,'_log_buffer',[]))})\n<code>.суд логи очистить</code> — очистить | <code>.суд логи txt</code> — txt файл | <code>.суд логи 100</code> — 100\n\n"
                 body = header + f"<blockquote expandable><code>{safe}</code></blockquote>"
                 if target:
-                    # если длинно — шлём кусками
                     if len(body) > 3800:
                         for i in range(0, len(safe), 3500):
                             chunk = safe[i:i+3500]

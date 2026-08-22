@@ -8,7 +8,7 @@
 ![SDK](https://img.shields.io/badge/SDK-1.4.3.0%2B-green)
 ![Python](https://img.shields.io/badge/Python-3.11-yellow)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
-![Version](https://img.shields.io/badge/version-1.0.13-orange)
+![Version](https://img.shields.io/badge/version-1.0.14-orange)
 
 ---
 
@@ -344,6 +344,7 @@ MIT — делай что хочешь, но суд должен остават�
 
 ## 📝 История версий
 
+- **v1.0.14** — Логи в `txt`: `_get_log_file()` + `_send_logs_as_file` (`send_message path/document`), `.суд логи txt` / `файл` отправляет `ai_judge_logs.txt` как документ, нормально смотрится в клиенте (было `хуево` — HTML блок)
 - **v1.0.13** — Промпт: вердикт ≤10 предложений (`verdict+reasoning+advice ≤10`), технически: `TL_messages_getHistory min_id=reply_id` строго после реплая (`mid>reply_id`, сортировка `id` возрастание) — теперь работает на `peer=-2491864850` после фиксов `1.0.11`
 - **v1.0.12** — Ошибки только в `Избранное` (не срать в чат), убран дубль `Суд запущен` (теперь только `MODIFY` → `'"Суд запущен"'`, без `Созывается`), `no reply`/`no api` только в `Saved`
 - **v1.0.11** — Фикс `ArrayList not iterable` (AyuGram Java): `_iter_java` для `messages/users/chats`, `resolve` и `storage` CamelCase, теперь `peer=-2491864850 Channel OK` и `mentions → ids` работают
