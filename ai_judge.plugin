@@ -11,7 +11,7 @@ __id__ = "ai_judge"
 __name__ = "ИИ Судья"
 __description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав. Стелс-мод + тесты."
 __author__ = "@you"
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 __icon__ = "exteraPlugins/27"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.0"
@@ -169,28 +169,60 @@ class AIJudgePlugin(BasePlugin):
             from client_utils import run_on_queue
             run_on_queue(lambda: self._run_llm_ping(0))
 
+    def _on_api_key_click(self, view=None):
+        # fallback input via dialog if settings Input not visible
+        try:
+            from ui.alert_dialog import AlertDialogBuilder
+            cur = self.get_setting("api_key", "")
+            masked = (cur[:6] + "…"+cur[-4:]) if len(cur)>10 else ("скрыт" if cur else "пусто")
+            def on_done(val):
+                if val is not None:
+                    v = str(val).strip()
+                    self.set_setting("api_key", v)
+                    try:
+                        from ui.bulletin import BulletinHelper
+                        BulletinHelper.show_info(f"✅ API ключ сохранён ({len(v)} симв.)")
+                    except:
+                        pass
+                    self.log(f"API key set via dialog len={len(v)}")
+            # Try simple dialog with EditText — fallback to bulletin hint
+            try:
+                from android.widget import EditText as AEditText
+                from ui.settings import EditText
+                # just show hint via bulletin if dialog unavailable
+                raise Exception("use bulletin")
+            except Exception as e:
+                from ui.bulletin import BulletinHelper
+                BulletinHelper.show_info(f"Текущий ключ: {masked}. Введи через команду: .суд ключ YOUR_KEY")
+        except Exception as e:
+            self.log(f"api_key click err {e}")
+
     def create_settings(self) -> List[Any]:
+        # use only known-safe icons to avoid rendering crash
+        cur_key = self.get_setting("api_key", "") or ""
+        key_sub = ("установлен ✅ " + cur_key[:7]+"…"+cur_key[-4:] if len(cur_key)>12 else ("пусто ❌ — введи ключ" if not cur_key else "установлен ✅")) + " | также: .суд ключ KEY"
         return [
             Header(text="ИИ Судья — настройки"),
             Text(text="Команда: ответь на сообщение в чате `.суд @юзер1 @юзер2 50` — бот возьмёт 50 сообщений ПОСЛЕ реплая, анонимизирует и вынесет вердикт.", subtext="Работает только когда ты отправляешь команду", icon="msg_info"),
-            Text(text="🔒 Анонимизация включена всегда", subtext="Судья НЕ видит реальные ники (Сторона A/B). Отключить нельзя — для честности", icon="msg_secret", red=False),
+            Text(text="🔒 Анонимизация включена всегда", subtext="Судья НЕ видит реальные ники (Сторона A/B). Отключить нельзя — для честности", icon="msg_info", red=False),
             Divider(),
             Header(text="LLM API (OpenAI-совместимый)"),
-            Input(key="api_key", text="API ключ", default="", subtext="Ключ от OpenAI / OpenRouter / др. Хранится локально", icon="msg_key"),
-            Input(key="base_url", text="Base URL", default=DEFAULT_BASE_URL, subtext="Например https://api.openai.com/v1 или https://openrouter.ai/api/v1", icon="msg_link"),
-            Input(key="model", text="Модель", default=DEFAULT_MODEL, subtext="gpt-4o-mini, gpt-4o, deepseek-chat, claude-3.5 и т.д.", icon="msg_bot"),
-            Input(key="default_limit", text="Лимит по умолчанию", default=str(DEFAULT_LIMIT), subtext="Сколько сообщений брать если число не указано (3-200)", icon="msg_edit"),
+            Input(key="api_key", text="API ключ", default="", subtext=key_sub, icon="msg_info"),
+            Input(key="base_url", text="Base URL", default=DEFAULT_BASE_URL, subtext="Напр. https://api.openai.com/v1 или https://openrouter.ai/api/v1 | .суд база URL", icon="msg_info"),
+            Input(key="model", text="Модель", default=DEFAULT_MODEL, subtext="gpt-4o-mini, deepseek-chat и т.д. | .суд модель NAME", icon="msg_info"),
+            Input(key="default_limit", text="Лимит по умолчанию", default=str(DEFAULT_LIMIT), subtext="Сколько сообщений брать если число не указано (3-200)", icon="msg_info"),
+            Text(text="🔑 Ввести API ключ (альтернативный способ)", subtext="Если поле выше не редактируется — нажми сюда или в чате: .суд ключ sk-...", icon="msg_info", on_click=self._on_api_key_click),
             Divider(),
             Header(text="Промпт судьи"),
-            Input(key="system_prompt", text="Системный промпт (оставь пустым = дефолт)", default="", subtext="Если заполнишь — заменит дефолтный. Используй {transcript} не нужно — он подставится автоматически.", icon="msg_text"),
-            Switch(key="show_transcript", text="Прикладывать анонимизированный транскрипт к вердикту", default=False, subtext="Полезно для отладки", icon="msg_view_file"),
-            Switch(key="stealth_mode", text="Стелс-мод (в Избранное)", default=False, subtext="Вердикт уходит в Избранное, а не в чат. Для теста без палева", icon="msg_secret"),
-            Input(key="stealth_peer", text="Куда слать в стелсе (оставь пусто = Избранное)", default="", subtext="ID диалога или @username. Пусто = Saved Messages", icon="msg_forward"),
+            Input(key="system_prompt", text="Системный промпт (оставь пустым = дефолт)", default="", subtext="Если заполнишь — заменит дефолтный.", icon="msg_info"),
+            Switch(key="show_transcript", text="Прикладывать анонимизированный транскрипт к вердикту", default=False, subtext="Полезно для отладки", icon="msg_info"),
+            Switch(key="stealth_mode", text="Стелс-мод (в Избранное)", default=True, subtext="Вердикт уходит в Избранное, а не в чат. Рекомендуется включить!", icon="msg_info"),
+            Input(key="stealth_peer", text="Куда слать в стелсе (оставь пусто = Избранное)", default="", subtext="ID диалога или @username. Пусто = Saved Messages", icon="msg_info"),
             Divider(),
             Header(text="Тестирование (без чата)"),
             Text(text="🧪 Тестовый суд — фейковый срач", subtext="Запустит суд на синтетических данных, проверит LLM", icon="msg_info", on_click=self._on_test_fake_click),
-            Text(text="🔍 Проверить LLM (пинг)", subtext="Отправит тестовый запрос к API и покажет ответ в Избранном", icon="msg_settings", on_click=self._on_test_llm_click),
-            Text(text="Команды в чате", subtext=".суд тест — фейковый срач в чате\n.суд пинг — проверка LLM\n.суд 5 (ответом) — реальный суд", icon="msg_text"),
+            Text(text="🔍 Проверить LLM (пинг)", subtext="Отправит тестовый запрос к API и покажет ответ в Избранном", icon="msg_info", on_click=self._on_test_llm_click),
+            Text(text="Команды в чате", subtext=".суд тест — фейковый срач\n.суд пинг — проверка LLM\n.суд ключ KEY — сохранить ключ\n.суд база URL — сменить Base URL\n.суд модель NAME — сменить модель\n.суд статус — показать настройки", icon="msg_info"),
         ]
 
     # ---------- hooks ----------
@@ -244,6 +276,124 @@ class AIJudgePlugin(BasePlugin):
                 except:
                     from client_utils import run_on_queue
                     run_on_queue(lambda: self._run_llm_ping(account, ping_peer))
+                return self._clear_and_cancel(params, attr)
+
+            # --- альтернативный ввод настроек через команду (если UI не работает) ---
+            # .суд ключ <key> | .суд api <key> | .суд база <url> | .суд модель <name> | .суд статус
+            # используем raw (сохраняем регистр для ключа), но проверяем low префикс
+            if re.match(r"^[\.\/!](суд|court|judge)\s+ключ\b", raw, re.IGNORECASE):
+                m = re.match(r"^[\.\/!](?:суд|court|judge)\s+ключ\s*(.*)$", raw, re.IGNORECASE | re.DOTALL)
+                val = (m.group(1).strip() if m else "").strip().strip('"\'')
+                if val:
+                    self.set_setting("api_key", val)
+                    self.log(f"api_key set via command len={len(val)}")
+                    try:
+                        from ui.bulletin import BulletinHelper
+                        BulletinHelper.show_info(f"✅ API ключ сохранён ({len(val)} симв.)")
+                    except:
+                        pass
+                    sp = self._get_saved_peer(account) or getattr(params, "peer", None)
+                    if sp:
+                        self._safe_send(account, sp, f"✅ <b>API ключ сохранён</b> ({len(val)} симв.)\nТеперь: <code>.суд пинг</code> для проверки\n<code>.суд тест</code> — фейковый суд", None, parse_mode="HTML")
+                else:
+                    cur = self.get_setting("api_key", "")
+                    hint = (cur[:7]+"…"+cur[-4:] if len(cur)>12 else ("пусто" if not cur else "скрыт"))
+                    try:
+                        from ui.bulletin import BulletinHelper
+                        BulletinHelper.show_info(f"Текущий ключ: {hint}. Введи: .суд ключ YOUR_KEY")
+                    except:
+                        pass
+                    sp = self._get_saved_peer(account) or getattr(params, "peer", None)
+                    if sp:
+                        self._safe_send(account, sp, f"🔑 Текущий ключ: <code>{hint}</code>\nВведи: <code>.суд ключ sk-...</code>", None, parse_mode="HTML")
+                return self._clear_and_cancel(params, attr)
+
+            if re.match(r"^[\.\/!](суд|court|judge)\s+(api|apikey)\b", raw, re.IGNORECASE):
+                m = re.match(r"^[\.\/!](?:суд|court|judge)\s+(?:api|apikey)\s*(.*)$", raw, re.IGNORECASE | re.DOTALL)
+                val = (m.group(1).strip() if m else "").strip().strip('"\'')
+                if val:
+                    self.set_setting("api_key", val)
+                    self.log(f"api_key set via api command len={len(val)}")
+                    try:
+                        from ui.bulletin import BulletinHelper
+                        BulletinHelper.show_info(f"✅ API ключ сохранён")
+                    except:
+                        pass
+                    sp = self._get_saved_peer(account) or getattr(params, "peer", None)
+                    if sp:
+                        self._safe_send(account, sp, f"✅ <b>API ключ сохранён</b> — проверь <code>.суд пинг</code>", None, parse_mode="HTML")
+                return self._clear_and_cancel(params, attr)
+
+            if re.match(r"^[\.\/!](суд|court|judge)\s+(база|base|url)\b", raw, re.IGNORECASE):
+                m = re.match(r"^[\.\/!](?:суд|court|judge)\s+(?:база|base|url)\s*(.*)$", raw, re.IGNORECASE | re.DOTALL)
+                val = (m.group(1).strip() if m else "").strip().strip('"\'')
+                if val:
+                    # allow without https
+                    if not val.startswith("http"):
+                        val = "https://" + val
+                    self.set_setting("base_url", val)
+                    self.log(f"base_url set via command {val}")
+                    try:
+                        from ui.bulletin import BulletinHelper
+                        BulletinHelper.show_info(f"✅ Base URL: {val}")
+                    except:
+                        pass
+                    sp = self._get_saved_peer(account) or getattr(params, "peer", None)
+                    if sp:
+                        self._safe_send(account, sp, f"✅ Base URL сохранён: <code>{val}</code>", None, parse_mode="HTML")
+                else:
+                    cur = self.get_setting("base_url", DEFAULT_BASE_URL)
+                    sp = self._get_saved_peer(account) or getattr(params, "peer", None)
+                    if sp:
+                        self._safe_send(account, sp, f"🔗 Текущий Base URL: <code>{cur}</code>\nСменить: <code>.суд база https://api.openai.com/v1</code>", None, parse_mode="HTML")
+                return self._clear_and_cancel(params, attr)
+
+            if re.match(r"^[\.\/!](суд|court|judge)\s+(модель|model)\b", raw, re.IGNORECASE):
+                m = re.match(r"^[\.\/!](?:суд|court|judge)\s+(?:модель|model)\s*(.*)$", raw, re.IGNORECASE | re.DOTALL)
+                val = (m.group(1).strip() if m else "").strip().strip('"\'')
+                if val:
+                    self.set_setting("model", val)
+                    self.log(f"model set via command {val}")
+                    try:
+                        from ui.bulletin import BulletinHelper
+                        BulletinHelper.show_info(f"✅ Модель: {val}")
+                    except:
+                        pass
+                    sp = self._get_saved_peer(account) or getattr(params, "peer", None)
+                    if sp:
+                        self._safe_send(account, sp, f"✅ Модель сохранена: <code>{val}</code>", None, parse_mode="HTML")
+                else:
+                    cur = self.get_setting("model", DEFAULT_MODEL)
+                    sp = self._get_saved_peer(account) or getattr(params, "peer", None)
+                    if sp:
+                        self._safe_send(account, sp, f"🤖 Текущая модель: <code>{cur}</code>\nСменить: <code>.суд модель gpt-4o-mini</code>", None, parse_mode="HTML")
+                return self._clear_and_cancel(params, attr)
+
+            if re.match(r"^[\.\/!](суд|court|judge)\s+(статус|status|настройки|settings|config|инфо)\b", raw, re.IGNORECASE):
+                cur_key = self.get_setting("api_key", "") or ""
+                masked = (cur_key[:7]+"…"+cur_key[-4:] + f" ({len(cur_key)} симв.)" if len(cur_key)>12 else ("пусто ❌" if not cur_key else "скрыт"))
+                base = self.get_setting("base_url", DEFAULT_BASE_URL)
+                model = self.get_setting("model", DEFAULT_MODEL)
+                stealth = bool(self.get_setting("stealth_mode", True))
+                sp = self._get_saved_peer(account)
+                status_text = f"⚙️ <b>ИИ Судья — статус</b>\n🔑 Ключ: <code>{masked}</code>\n🔗 Base: <code>{base}</code>\n🤖 Модель: <code>{model}</code>\n🕵️ Стелс: <b>{'вкл → в Избранное' if stealth else 'выкл → в чат'}</b>\n👤 Saved peer: <code>{sp}</code>\n\nКоманды:\n<code>.суд ключ KEY</code>\n<code>.суд база URL</code>\n<code>.суд модель NAME</code>\n<code>.суд пинг</code> — проверка\n<code>.суд тест</code> — фейковый суд"
+                # send to saved if possible else to current peer
+                target = sp or getattr(params, "peer", None)
+                if target:
+                    self._safe_send(account, target, status_text, None, parse_mode="HTML")
+                try:
+                    from ui.bulletin import BulletinHelper
+                    BulletinHelper.show_info(f"Статус: ключ {masked}, модель {model}")
+                except:
+                    pass
+                self.log(f"status requested account={account} sp={sp}")
+                return self._clear_and_cancel(params, attr)
+
+            if re.match(r"^[\.\/!](суд|court|judge)\s+(помощь|help|хелп)\b", raw, re.IGNORECASE):
+                help_text = "📖 <b>ИИ Судья — помощь</b>\n\n<b>Реальный суд (ответом):</b>\n<code>.суд @user1 @user2 50</code> — 50 сообщений после реплая\n\n<b>Тесты (без реплая):</b>\n<code>.суд тест</code> — фейковый срач\n<code>.суд пинг</code> — проверка LLM\n\n<b>Настройки через чат:</b>\n<code>.суд ключ sk-...</code>\n<code>.суд база https://...</code>\n<code>.суд модель gpt-4o-mini</code>\n<code>.суд статус</code> — показать\n\nАнонимизация всегда включена 🔒"
+                target = self._get_saved_peer(account) or getattr(params, "peer", None)
+                if target:
+                    self._safe_send(account, target, help_text, None, parse_mode="HTML")
                 return self._clear_and_cancel(params, attr)
 
             parsed = parse_sud_command(raw)
@@ -317,7 +467,7 @@ class AIJudgePlugin(BasePlugin):
                     pass
                 # подсказка в тот же чат как отдельное сообщение (не модифицируя команду)
                 try:
-                    stealth = bool(self.get_setting("stealth_mode", False))
+                    stealth = bool(self.get_setting("stealth_mode", True))
                     hint_peer = self._resolve_stealth_target(account, peer_id) if stealth else peer_id
                     self._safe_send(account, hint_peer, "❗️ ИИ Судья: отправь <code>.суд</code> <b>ответом</b> на сообщение, ПОСЛЕ которого начинается срач.\nПример: ответь на сообщение → <code>.суд @user1 @user2 50</code>", None, parse_mode="HTML")
                 except:
@@ -357,30 +507,110 @@ class AIJudgePlugin(BasePlugin):
             return HookResult()
 
     def _get_saved_peer(self, account: int):
-        """Peer для Избранного = свой user_id"""
-        # 1) пробуем через AccountClient
+        """Peer для Избранного = свой user_id. Пробуем много способов из доков (см. client_utils)."""
+        # helper to extract uid
+        def _extract_uid(obj):
+            if not obj:
+                return None
+            for a in ("id", "user_id", "userId", "getId", "getUserId"):
+                try:
+                    v = getattr(obj, a, None)
+                    if callable(v):
+                        v = v()
+                    if isinstance(v, int) and v != 0:
+                        return int(v)
+                    if v is not None and str(v).lstrip("-").isdigit():
+                        iv = int(v)
+                        if iv != 0:
+                            return iv
+                except:
+                    pass
+            return None
+
+        # 1) через AccountClient.get_user_config().getCurrentUser()
         try:
             c = self.client(account)
             uc = c.get_user_config()
-            me = uc.getCurrentUser()
-            if me:
-                # у TLRPC.User поле id
-                uid = getattr(me, "id", None) or getattr(me, "user_id", None)
-                if uid:
-                    return int(uid)
+            me = uc.getCurrentUser() if hasattr(uc, "getCurrentUser") else None
+            uid = _extract_uid(me)
+            if uid:
+                self.log(f"saved_peer via client.getCurrentUser={uid}")
+                return uid
         except Exception as e:
-            self.log(f"get_saved_peer via client failed: {e}")
-        # 2) пробуем через client_utils напрямую
+            self.log(f"get_saved_peer via client.getCurrentUser failed: {e}")
+
+        # 2) getCurrentUser via client_utils
         try:
             from client_utils import get_user_config
             uc = get_user_config(account)
-            me = uc.getCurrentUser()
-            if me:
-                uid = getattr(me, "id", None) or getattr(me, "user_id", None)
-                if uid:
+            me = uc.getCurrentUser() if hasattr(uc, "getCurrentUser") else None
+            uid = _extract_uid(me)
+            if uid:
+                self.log(f"saved_peer via get_user_config(account).getCurrentUser={uid}")
+                return uid
+        except Exception as e:
+            self.log(f"get_saved_peer via get_user_config(account) failed: {e}")
+
+        # 3) getClientUserId — прямой int (дока упоминает как альтернатива)
+        try:
+            from client_utils import get_user_config
+            uc = get_user_config(account)
+            if hasattr(uc, "getClientUserId"):
+                uid = uc.getClientUserId()
+                if uid and int(uid) != 0:
+                    self.log(f"saved_peer via getClientUserId(account)={uid}")
                     return int(uid)
         except Exception as e:
-            self.log(f"get_saved_peer via utils failed: {e}")
+            self.log(f"getClientUserId(account) failed: {e}")
+
+        # 4) selected account fallback
+        try:
+            from client_utils import get_user_config, get_selected_account
+            sel = get_selected_account()
+            uc = get_user_config(sel)
+            me = uc.getCurrentUser() if hasattr(uc, "getCurrentUser") else None
+            uid = _extract_uid(me)
+            if uid:
+                self.log(f"saved_peer via selectedAccount {sel} getCurrentUser={uid}")
+                return uid
+            if hasattr(uc, "getClientUserId"):
+                uid = uc.getClientUserId()
+                if uid and int(uid)!=0:
+                    self.log(f"saved_peer via selected getClientUserId={uid}")
+                    return int(uid)
+        except Exception as e:
+            self.log(f"selectedAccount saved_peer failed: {e}")
+
+        # 5) напрямую через org.telegram.messenger.UserConfig
+        try:
+            from org.telegram.messenger import UserConfig
+            uc = UserConfig.getInstance(account)
+            me = uc.getCurrentUser() if hasattr(uc, "getCurrentUser") else None
+            uid = _extract_uid(me)
+            if uid:
+                self.log(f"saved_peer via UserConfig.getInstance({account})={uid}")
+                return uid
+            if hasattr(uc, "getClientUserId"):
+                uid = uc.getClientUserId()
+                if uid and int(uid)!=0:
+                    self.log(f"saved_peer via UserConfig.getClientUserId={uid}")
+                    return int(uid)
+        except Exception as e:
+            self.log(f"UserConfig.getInstance failed: {e}")
+
+        # 6) UserConfig selected
+        try:
+            from org.telegram.messenger import UserConfig
+            uc = UserConfig.getInstance(UserConfig.selectedAccount)
+            me = uc.getCurrentUser() if hasattr(uc, "getCurrentUser") else None
+            uid = _extract_uid(me)
+            if uid:
+                self.log(f"saved_peer via UserConfig.selected={uid}")
+                return uid
+        except Exception as e:
+            self.log(f"UserConfig selected failed: {e}")
+
+        self.log("get_saved_peer: all methods failed -> None")
         return None
 
     def _resolve_stealth_target(self, account: int, original_peer: int):
@@ -446,8 +676,7 @@ class AIJudgePlugin(BasePlugin):
 
     def _run_fake_test(self, account: int, peer_hint=None):
         """Синтетический суд без реального чата — проверка всего пайплайна"""
-        is_stealth = bool(self.get_setting("stealth_mode", False))
-        # куда слать: peer_hint = чат где написали .суд тест; если стелс — переводим в Избранное как в _run_court
+        is_stealth = bool(self.get_setting("stealth_mode", True))
         if peer_hint is not None:
             if is_stealth:
                 target = self._resolve_stealth_target(account, peer_hint)
@@ -455,16 +684,28 @@ class AIJudgePlugin(BasePlugin):
                 target = peer_hint
         else:
             target = self._get_saved_peer(account)
-            is_stealth = True  # без чата (кнопка в настройках) — только в Избранное
+            is_stealth = True
+        if target is None or target == 0:
+            try:
+                from client_utils import get_selected_account
+                sel = get_selected_account()
+                target = self._get_saved_peer(sel)
+                self.log(f"fake_test fallback via selected {sel} -> {target}")
+            except:
+                pass
         if target is None:
-            target = self._get_saved_peer(account) or 0
-            if target == 0:
-                try:
-                    from ui.bulletin import BulletinHelper
-                    BulletinHelper.show_info("❌ Тест: не найден peer для отправки. Открой Избранное и попробуй снова")
-                except:
-                    pass
-                self.log("Fake test: no target peer")
+            target = self._get_saved_peer(account) or peer_hint or 0
+        if target == 0 or target is None:
+            try:
+                from ui.bulletin import BulletinHelper
+                BulletinHelper.show_info("❌ Тест: не найден peer для отправки. Открой Избранное и попробуй снова")
+            except:
+                pass
+            self.log(f"Fake test: no target peer account={account} peer_hint={peer_hint}")
+            # последний шанс — peer_hint
+            if peer_hint:
+                target = peer_hint
+            else:
                 return
 
         self.log(f"🧪 Fake test start account={account} target={target}")
@@ -495,18 +736,37 @@ class AIJudgePlugin(BasePlugin):
         self.log("Fake test done")
 
     def _run_llm_ping(self, account: int, peer_hint=None):
-        is_stealth = bool(self.get_setting("stealth_mode", False))
+        is_stealth = bool(self.get_setting("stealth_mode", True))
         if peer_hint is not None and is_stealth:
             target = self._resolve_stealth_target(account, peer_hint)
         elif peer_hint is not None:
             target = peer_hint
         else:
             target = self._get_saved_peer(account)
+        # усиленный fallback: пробуем еще selected account
+        if target is None or target == 0:
+            try:
+                from client_utils import get_selected_account
+                sel = get_selected_account()
+                target = self._get_saved_peer(sel)
+                if target:
+                    self.log(f"ping fallback via selectedAccount {sel} -> {target}")
+            except:
+                pass
         if target is None:
-            target = self._get_saved_peer(account) or 0
-        if target == 0:
-            self.log("LLM ping: no target")
-            return
+            target = self._get_saved_peer(account) or peer_hint or 0
+        if target == 0 or target is None:
+            self.log("LLM ping: no target even after fallback")
+            try:
+                from ui.bulletin import BulletinHelper
+                BulletinHelper.show_info("❌ Пинг: не найден Saved Messages. Открой Избранное вручную и попробуй снова")
+            except:
+                pass
+            # пытаемся хотя бы в текущий чат
+            if peer_hint:
+                target = peer_hint
+            else:
+                return
         api_key = (self.get_setting("api_key", "") or "").strip()
         base_url = (self.get_setting("base_url", DEFAULT_BASE_URL) or DEFAULT_BASE_URL).strip()
         model = (self.get_setting("model", DEFAULT_MODEL) or DEFAULT_MODEL).strip()
@@ -537,7 +797,7 @@ class AIJudgePlugin(BasePlugin):
 
     # ---------- core logic ----------
     def _run_court(self, account: int, peer_id: int, reply_msg_id: int, mentions: List[str], limit: int):
-        stealth = bool(self.get_setting("stealth_mode", False))
+        stealth = bool(self.get_setting("stealth_mode", True))
         # куда слать ответы
         target_peer = peer_id
         target_reply = reply_msg_id
@@ -1049,42 +1309,93 @@ class AIJudgePlugin(BasePlugin):
         self._safe_send(account, peer_id, text, reply_id, parse_mode="HTML")
 
     def _safe_send(self, account, peer_id, text, reply_id=None, parse_mode="HTML"):
+        # пытаемся несколькими способами из доков client_utils — все с account=
+        # 1) self.client(account).send_text
         try:
-            # SDK >=1.4.5 имеет self.client(account); на старых — сразу fallback
+            c = None
             try:
                 c = self.client(account)
-            except Exception as e:
+            except:
                 c = None
-
             if c is not None:
                 kwargs = {}
                 if reply_id:
                     kwargs["replyToMsg"] = int(reply_id)
                 try:
                     c.send_text(peer_id, text, parse_mode=parse_mode, **kwargs)
+                    self.log(f"safe_send via client.send_text peer={peer_id} ok")
                     return
                 except TypeError:
                     try:
                         c.send_text(peer_id, text, **kwargs)
+                        self.log(f"safe_send via client.send_text no parse ok peer={peer_id}")
                         return
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.log(f"client.send_text no parse failed {e}")
                 except Exception as e:
                     self.log(f"client.send_text failed: {e}")
+        except Exception as e:
+            self.log(f"client block err {e}")
 
-            # fallback через глобальную функцию
+        # 2) client_utils.send_text with account=
+        try:
             from client_utils import send_text
             try:
                 send_text(peer_id, text, parse_mode=parse_mode, account=account, replyToMsg=int(reply_id) if reply_id else None)
+                self.log(f"safe_send via send_text account={account} peer={peer_id} ok")
+                return
+            except TypeError as te:
+                self.log(f"send_text with account TypeError {te} — try without")
+                try:
+                    send_text(peer_id, text, parse_mode=parse_mode, replyToMsg=int(reply_id) if reply_id else None)
+                    self.log(f"safe_send via send_text no account ok peer={peer_id}")
+                    return
+                except Exception as e2:
+                    self.log(f"send_text no account also failed {e2}")
+            except Exception as e:
+                self.log(f"send_text with account failed {e}")
+                try:
+                    send_text(peer_id, text, parse_mode=parse_mode, replyToMsg=int(reply_id) if reply_id else None)
+                    self.log(f"safe_send via send_text fallback ok")
+                    return
+                except Exception as e2:
+                    self.log(f"send_text fallback also failed {e2}")
+        except Exception as e:
+            self.log(f"send_text import/outer failed {e}")
+
+        # 3) client_utils.send_message dict (low-level, из доков client_utils)
+        try:
+            from client_utils import send_message
+            d = {"peer": peer_id, "message": text}
+            if reply_id:
+                d["replyToMsg"] = int(reply_id)
+            if parse_mode:
+                d["parse_mode"] = parse_mode
+            try:
+                send_message(d, account=account)
+                self.log(f"safe_send via send_message dict account={account} peer={peer_id} ok")
                 return
             except TypeError:
-                send_text(peer_id, text, parse_mode=parse_mode, replyToMsg=int(reply_id) if reply_id else None)
+                send_message(d)
+                self.log(f"safe_send via send_message no account ok")
                 return
-            except Exception as e2:
-                self.log(f"send_text fallback err: {e2}")
-                # последняя попытка без parse_mode
-                send_text(peer_id, text, account=account)
-
         except Exception as e:
-            self.log(f"_safe_send err: {e}")
+            self.log(f"send_message dict failed {e}")
+
+        # 4) последняя попытка — просто send_text без parse/account
+        try:
+            from client_utils import send_text
+            send_text(peer_id, text)
+            self.log(f"safe_send via bare send_text ok peer={peer_id}")
+            return
+        except Exception as e:
+            self.log(f"bare send_text failed {e}")
+
+        # 5) если даже это не помогло — пробуем bulletin как крайний fallback
+        try:
+            from ui.bulletin import BulletinHelper
+            BulletinHelper.show_info(text[:150] if text else "send failed")
+        except:
+            pass
+        self.log(f"_safe_send all methods failed peer={peer_id} account={account} text={text[:80] if text else 'empty'}")
 
