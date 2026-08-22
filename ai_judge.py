@@ -11,7 +11,7 @@ __id__ = "ai_judge"
 __name__ = "ИИ Судья"
 __description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав. Стелс-мод + тесты."
 __author__ = "@you"
-__version__ = "1.0.6"
+__version__ = "1.0.7"
 __icon__ = "exteraPlugins/1"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.0"
@@ -217,12 +217,16 @@ class AIJudgePlugin(BasePlugin):
             pass
         self.log("Тест: фейковый срач запущен из настроек")
         try:
-            from client_utils import run_on_queue, PLUGINS_QUEUE, get_selected_account
-            # пробуем взять текущий аккаунт
+            from client_utils import run_on_queue, PLUGINS_QUEUE
             try:
+                from client_utils import get_selected_account
                 acc = get_selected_account()
             except:
-                acc = 0
+                try:
+                    from org.telegram.messenger import UserConfig
+                    acc = UserConfig.selectedAccount
+                except:
+                    acc = 0
             run_on_queue(lambda: self._run_fake_test(acc), PLUGINS_QUEUE)
         except Exception:
             from client_utils import run_on_queue
@@ -236,11 +240,16 @@ class AIJudgePlugin(BasePlugin):
             pass
         self.log("Тест: проверка LLM запущена из настроек")
         try:
-            from client_utils import run_on_queue, PLUGINS_QUEUE, get_selected_account
+            from client_utils import run_on_queue, PLUGINS_QUEUE
             try:
+                from client_utils import get_selected_account
                 acc = get_selected_account()
             except:
-                acc = 0
+                try:
+                    from org.telegram.messenger import UserConfig
+                    acc = UserConfig.selectedAccount
+                except:
+                    acc = 0
             run_on_queue(lambda: self._run_llm_ping(acc), PLUGINS_QUEUE)
         except Exception:
             from client_utils import run_on_queue
@@ -682,9 +691,56 @@ class AIJudgePlugin(BasePlugin):
             self.log(f"on_send_message_hook error: {e}")
             return HookResult()
 
+    def _get_client_safe(self, account):
+        """AyuGram/Extera совместимый get client — пробует self.client / get_client / get_account_instance"""
+        for name in ("client", "get_client", "getClient", "get_account_instance", "getAccountInstance"):
+            try:
+                fn = getattr(self, name, None)
+                if fn:
+                    try:
+                        c = fn(account)
+                        if c:
+                            return c
+                    except TypeError:
+                        c = fn()
+                        if c:
+                            return c
+            except:
+                pass
+        try:
+            from client_utils import get_account_instance
+            try:
+                return get_account_instance(account)
+            except TypeError:
+                return get_account_instance()
+        except:
+            pass
+        try:
+            from client_utils import get_messages_controller
+            # fallback: хотя бы контроллер вернёт что-то
+            return None
+        except:
+            return None
+
+    def _get_user_config_safe(self, account=None):
+        """get_user_config с учётом AyuGram сигнатуры (0 args vs 1 arg)"""
+        try:
+            from client_utils import get_user_config
+            if account is not None:
+                try:
+                    return get_user_config(account)
+                except TypeError:
+                    return get_user_config()
+            else:
+                try:
+                    return get_user_config()
+                except TypeError:
+                    return get_user_config(0)
+        except:
+            return None
+
     def _get_saved_peer(self, account: int):
-        """Peer для Избранного = свой user_id. Пробуем много способов из доков (см. client_utils)."""
-        # helper to extract uid
+        """Peer для Избранного = свой user_id. Пробуем много способов (AyuGram/Extera)."""
         def _extract_uid(obj):
             if not obj:
                 return None
@@ -703,81 +759,108 @@ class AIJudgePlugin(BasePlugin):
                     pass
             return None
 
-        # 1) через AccountClient.get_user_config().getCurrentUser()
+        # 1) через AccountClient
         try:
-            c = self.client(account)
-            uc = c.get_user_config()
-            me = uc.getCurrentUser() if hasattr(uc, "getCurrentUser") else None
-            uid = _extract_uid(me)
-            if uid:
-                self.log(f"saved_peer via client.getCurrentUser={uid}")
-                return uid
+            c = self._get_client_safe(account)
+            if c:
+                uc = c.get_user_config() if hasattr(c, "get_user_config") else None
+                if uc:
+                    me = uc.getCurrentUser() if hasattr(uc, "getCurrentUser") else None
+                    uid = _extract_uid(me)
+                    if uid:
+                        self.log(f"saved_peer via client.getCurrentUser={uid}")
+                        return uid
+                    if hasattr(uc, "getClientUserId"):
+                        try:
+                            uid2 = uc.getClientUserId()
+                            if uid2 and int(uid2)!=0:
+                                self.log(f"saved_peer via client.getClientUserId={uid2}")
+                                return int(uid2)
+                        except:
+                            pass
         except Exception as e:
-            self.log(f"get_saved_peer via client.getCurrentUser failed: {e}")
+            self.log(f"get_saved_peer via client failed: {e}")
 
-        # 2) getCurrentUser via client_utils
-        try:
-            from client_utils import get_user_config
-            uc = get_user_config(account)
-            me = uc.getCurrentUser() if hasattr(uc, "getCurrentUser") else None
-            uid = _extract_uid(me)
-            if uid:
-                self.log(f"saved_peer via get_user_config(account).getCurrentUser={uid}")
-                return uid
-        except Exception as e:
-            self.log(f"get_saved_peer via get_user_config(account) failed: {e}")
+        # 2) get_user_config с account и без
+        for acc in [account, None]:
+            try:
+                uc = self._get_user_config_safe(acc if acc is not None else account)
+                if not uc:
+                    continue
+                me = uc.getCurrentUser() if hasattr(uc, "getCurrentUser") else None
+                uid = _extract_uid(me)
+                if uid:
+                    self.log(f"saved_peer via get_user_config({acc}).getCurrentUser={uid}")
+                    return uid
+                if hasattr(uc, "getClientUserId"):
+                    try:
+                        uid2 = uc.getClientUserId()
+                        if uid2 and int(uid2)!=0:
+                            self.log(f"saved_peer via get_user_config({acc}).getClientUserId={uid2}")
+                            return int(uid2)
+                    except:
+                        pass
+            except Exception as e:
+                self.log(f"get_user_config({acc}) failed: {e}")
 
-        # 3) getClientUserId — прямой int (дока упоминает как альтернатива)
+        # 3) selected account fallback (AyuGram: нет get_selected_account, берём UserConfig.selectedAccount)
         try:
-            from client_utils import get_user_config
-            uc = get_user_config(account)
-            if hasattr(uc, "getClientUserId"):
-                uid = uc.getClientUserId()
-                if uid and int(uid) != 0:
-                    self.log(f"saved_peer via getClientUserId(account)={uid}")
-                    return int(uid)
-        except Exception as e:
-            self.log(f"getClientUserId(account) failed: {e}")
-
-        # 4) selected account fallback
-        try:
-            from client_utils import get_user_config, get_selected_account
-            sel = get_selected_account()
-            uc = get_user_config(sel)
-            me = uc.getCurrentUser() if hasattr(uc, "getCurrentUser") else None
-            uid = _extract_uid(me)
-            if uid:
-                self.log(f"saved_peer via selectedAccount {sel} getCurrentUser={uid}")
-                return uid
-            if hasattr(uc, "getClientUserId"):
-                uid = uc.getClientUserId()
-                if uid and int(uid)!=0:
-                    self.log(f"saved_peer via selected getClientUserId={uid}")
-                    return int(uid)
+            sel = None
+            try:
+                from client_utils import get_selected_account
+                sel = get_selected_account()
+            except:
+                try:
+                    from org.telegram.messenger import UserConfig
+                    sel = UserConfig.selectedAccount
+                except:
+                    sel = 0
+            uc = self._get_user_config_safe(sel)
+            if uc:
+                me = uc.getCurrentUser() if hasattr(uc, "getCurrentUser") else None
+                uid = _extract_uid(me)
+                if uid:
+                    self.log(f"saved_peer via selected {sel} getCurrentUser={uid}")
+                    return uid
+                if hasattr(uc, "getClientUserId"):
+                    try:
+                        uid2 = uc.getClientUserId()
+                        if uid2 and int(uid2)!=0:
+                            self.log(f"saved_peer via selected getClientUserId={uid2}")
+                            return int(uid2)
+                    except:
+                        pass
         except Exception as e:
             self.log(f"selectedAccount saved_peer failed: {e}")
 
-        # 5) напрямую через org.telegram.messenger.UserConfig
-        try:
-            from org.telegram.messenger import UserConfig
-            uc = UserConfig.getInstance(account)
-            me = uc.getCurrentUser() if hasattr(uc, "getCurrentUser") else None
-            uid = _extract_uid(me)
-            if uid:
-                self.log(f"saved_peer via UserConfig.getInstance({account})={uid}")
-                return uid
-            if hasattr(uc, "getClientUserId"):
-                uid = uc.getClientUserId()
-                if uid and int(uid)!=0:
-                    self.log(f"saved_peer via UserConfig.getClientUserId={uid}")
-                    return int(uid)
-        except Exception as e:
-            self.log(f"UserConfig.getInstance failed: {e}")
+        # 4) напрямую через UserConfig
+        for acc in [account, 0, 15]:
+            try:
+                from org.telegram.messenger import UserConfig
+                uc = UserConfig.getInstance(acc)
+                if not uc:
+                    continue
+                me = uc.getCurrentUser() if hasattr(uc, "getCurrentUser") else None
+                uid = _extract_uid(me)
+                if uid:
+                    self.log(f"saved_peer via UserConfig.getInstance({acc})={uid}")
+                    return uid
+                if hasattr(uc, "getClientUserId"):
+                    try:
+                        uid2 = uc.getClientUserId()
+                        if uid2 and int(uid2)!=0:
+                            self.log(f"saved_peer via UserConfig({acc}).getClientUserId={uid2}")
+                            return int(uid2)
+                    except:
+                        pass
+            except Exception as e:
+                self.log(f"UserConfig.getInstance({acc}) failed: {e}")
 
-        # 6) UserConfig selected
+        # 5) UserConfig.selectedAccount
         try:
             from org.telegram.messenger import UserConfig
-            uc = UserConfig.getInstance(UserConfig.selectedAccount)
+            sel = UserConfig.selectedAccount
+            uc = UserConfig.getInstance(sel)
             me = uc.getCurrentUser() if hasattr(uc, "getCurrentUser") else None
             uid = _extract_uid(me)
             if uid:
@@ -863,12 +946,16 @@ class AIJudgePlugin(BasePlugin):
             is_stealth = True
         if target is None or target == 0:
             try:
-                from client_utils import get_selected_account
-                sel = get_selected_account()
+                try:
+                    from client_utils import get_selected_account
+                    sel = get_selected_account()
+                except:
+                    from org.telegram.messenger import UserConfig
+                    sel = UserConfig.selectedAccount
                 target = self._get_saved_peer(sel)
                 self.log(f"fake_test fallback via selected {sel} -> {target}")
-            except:
-                pass
+            except Exception as e:
+                self.log(f"fake_test selected fallback err {e}")
         if target is None:
             target = self._get_saved_peer(account) or peer_hint or 0
         if target == 0 or target is None:
@@ -922,13 +1009,17 @@ class AIJudgePlugin(BasePlugin):
         # усиленный fallback: пробуем еще selected account
         if target is None or target == 0:
             try:
-                from client_utils import get_selected_account
-                sel = get_selected_account()
+                try:
+                    from client_utils import get_selected_account
+                    sel = get_selected_account()
+                except:
+                    from org.telegram.messenger import UserConfig
+                    sel = UserConfig.selectedAccount
                 target = self._get_saved_peer(sel)
                 if target:
                     self.log(f"ping fallback via selectedAccount {sel} -> {target}")
-            except:
-                pass
+            except Exception as e:
+                self.log(f"ping selected fallback err {e}")
         if target is None:
             target = self._get_saved_peer(account) or peer_hint or 0
         if target == 0 or target is None:
@@ -1218,7 +1309,7 @@ class AIJudgePlugin(BasePlugin):
     def _get_input_peer(self, account: int, peer_id: int):
         # 1) через MessagesController — правильный access_hash
         try:
-            c = self.client(account)
+            c = self._get_client_safe(account)
             mc = c.get_messages_controller()
             for meth in ["getInputPeer", "getInputPeerById", "getPeer", "getInputPeerForDialog"]:
                 if hasattr(mc, meth):
@@ -1329,7 +1420,10 @@ class AIJudgePlugin(BasePlugin):
     def _fetch_history_via_storage(self, account, peer_id, reply_msg_id, limit):
         """ Fallback через MessagesStorage (локальная БД) """
         try:
-            c = self.client(account)
+            c = self._get_client_safe(account)
+            if not c:
+                self.log("storage fallback: no client")
+                return []
             storage = c.get_messages_storage()
             # storage.getMessages(peer_id, ...) — но сигнатура неизвестна, пробуем
             # Альтернатива: MessagesController.getMessages
@@ -1536,13 +1630,11 @@ class AIJudgePlugin(BasePlugin):
 
     def _safe_send(self, account, peer_id, text, reply_id=None, parse_mode="HTML"):
         # пытаемся несколькими способами из доков client_utils — все с account=
-        # 1) self.client(account).send_text
+        # 1) self._get_client_safe(account).send_text
         try:
-            c = None
-            try:
-                c = self.client(account)
-            except:
-                c = None
+            c = self._get_client_safe(account)
+            if not c:
+                self.log(f"safe_send: no client for account {account} → skip to send_text")
             if c is not None:
                 kwargs = {}
                 if reply_id:
