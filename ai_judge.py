@@ -11,7 +11,7 @@ __id__ = "ai_judge"
 __name__ = "ИИ Судья"
 __description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав. Стелс-мод + тесты."
 __author__ = "@you"
-__version__ = "1.0.18"
+__version__ = "1.0.19"
 __icon__ = "exteraPlugins/1"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.0"
@@ -504,7 +504,7 @@ class AIJudgePlugin(BasePlugin):
             Divider(),
             Header(text="Промпт судьи"),
             Input(key="system_prompt", text="Системный промпт (оставь пустым = дефолт)", default="", subtext="Если заполнишь — заменит дефолтный.", icon="msg_info"),
-            Switch(key="show_transcript", text="Прикладывать анонимизированный транскрипт к вердикту", default=False, subtext="Полезно для отладки", icon="msg_info"),
+            Switch(key="show_transcript", text="Прикладывать переписку к вердикту", default=False, subtext="Выкл = не показывает переписку (как просил). Вкл = только в Избранном если стелс", icon="msg_info"),
             Switch(key="stealth_mode", text="Стелс-мод (в Избранное)", default=True, subtext="Вердикт уходит в Избранное, а не в чат. Рекомендуется включить!", icon="msg_info"),
             Input(key="stealth_peer", text="Куда слать в стелсе (оставь пусто = Избранное)", default="", subtext="ID диалога или @username. Пусто = Saved Messages", icon="msg_info"),
             Divider(),
@@ -1255,9 +1255,9 @@ class AIJudgePlugin(BasePlugin):
             self._safe_send(account, target, f"❌ <b>LLM не ответил / вернул не JSON</b>\nПроверь API ключ, Base URL, модель в настройках.\n\nОтвет:\n<code>{(raw or 'пусто')[:1200].replace('<','&lt;')}</code>\n\nЛог: смотри adb logcat | grep 'ИИ Суд'", None, parse_mode="HTML")
             return
 
-        # форматируем как реальный вердикт, но с пометкой ТЕСТ
+        # форматируем как реальный вердикт, но с пометкой ТЕСТ — is_stealth=True для тестов (всегда в Избранное если надо)
         fake_peer =  -100999999  # фейковый id для шапки
-        final = self._format_verdict(verdict_json, raw, mapping, reverse, participants, messages, anon_transcript, len(messages), fake_peer, 999)
+        final = self._format_verdict(verdict_json, raw, mapping, reverse, participants, messages, anon_transcript, len(messages), fake_peer, 999, stealth=True)
         final = "🧪 <b>ТЕСТОВЫЙ ВЕРДИКТ (синтетика)</b> — плагин работает!\n<i>Это фейковый срач для проверки пайплайна. Реальные ники были скрыты.</i>\n\n" + final
         self._safe_send(account, target, final, None, parse_mode="HTML")
         self.log("Fake test done")
@@ -1374,8 +1374,8 @@ class AIJudgePlugin(BasePlugin):
 
         verdict_json, raw_llm = self._call_llm(anon_transcript, participants_human)
 
-        # 5. Форматируем вердикт с подстановкой реальных ников через макросы
-        final_text = self._format_verdict(verdict_json, raw_llm, mapping, reverse_mapping, participants_human, messages, anon_transcript, limit, peer_id, reply_msg_id)
+        # 5. Форматируем вердикт — переписку показываем только если show_transcript+стелс (чтобы не палить чат)
+        final_text = self._format_verdict(verdict_json, raw_llm, mapping, reverse_mapping, participants_human, messages, anon_transcript, limit, peer_id, reply_msg_id, stealth=stealth)
         if stealth:
             # добавляем шапку откуда вердикт
             stealth_header = f"🕵️ <i>Стелс-мод: вердикт из чата <code>{peer_id}</code> реплай #{reply_msg_id} → показан только тебе (в Избранном)</i>\n"
@@ -1891,7 +1891,7 @@ class AIJudgePlugin(BasePlugin):
             self.log(f"extract_json fail: {e}")
         return None
 
-    def _format_verdict(self, verdict, raw_llm, mapping, reverse, participants_human, messages, transcript, limit, peer_id, reply_id):
+    def _format_verdict(self, verdict, raw_llm, mapping, reverse, participants_human, messages, transcript, limit, peer_id, reply_id, stealth=False):
         # мап anon -> реальное имя для подстановки макросов
         # построим anon -> display
         anon_to_display = {}
@@ -1953,10 +1953,10 @@ class AIJudgePlugin(BasePlugin):
             # макросы для копирования — подсказка
             body += f"\n\n<i>Макросы: {{{{winner}}}}={winner_human}, {{{{count}}}}={len(messages)}</i>"
 
-            if self.get_setting("show_transcript", False):
-                # экранируем HTML в транскрипте?
+            # переписку показываем только если явно включено И только в Избранное (стелс), чтобы не палить чат
+            if self.get_setting("show_transcript", False) and stealth:
                 safe_trans = transcript.replace("<", "&lt;").replace(">", "&gt;")
-                body += f"\n\n<blockquote expandable>Анонимизированный транскрипт:\n{safe_trans}</blockquote>"
+                body += f"\n\n<blockquote expandable>Анонимизированный транскрипт (только в Избранном):\n{safe_trans}</blockquote>"
 
             return body
         else:
