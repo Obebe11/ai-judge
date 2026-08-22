@@ -11,7 +11,7 @@ __id__ = "ai_judge"
 __name__ = "ИИ Судья"
 __description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав. Стелс-мод + тесты."
 __author__ = "@you"
-__version__ = "1.0.10"
+__version__ = "1.0.11"
 __icon__ = "exteraPlugins/1"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.0"
@@ -151,6 +151,50 @@ class AIJudgePlugin(BasePlugin):
         except:
             return None
 
+    def _iter_java(self, jlist):
+        """ArrayList → python list (AyuGram/Extera: ArrayList не итерируется напрямую)"""
+        if jlist is None:
+            return []
+        # пробуем python iteration
+        try:
+            # Chaquopy иногда даёт ArrayList как iterable, иногда нет
+            return list(jlist)
+        except:
+            pass
+        try:
+            # Java ArrayList: size() + get(i)
+            sz = jlist.size() if hasattr(jlist, "size") else None
+            if callable(sz):
+                sz = sz()
+            elif isinstance(sz, int):
+                pass
+            else:
+                sz = getattr(jlist, "size", None)
+                if callable(sz):
+                    sz = sz()
+                else:
+                    sz = None
+            if isinstance(sz, int):
+                return [jlist.get(i) for i in range(sz)]
+        except:
+            pass
+        try:
+            arr = jlist.toArray()
+            return list(arr)
+        except:
+            pass
+        try:
+            # fallback: пробуем for через iterator()
+            it = jlist.iterator()
+            res = []
+            while it.hasNext():
+                res.append(it.next())
+            return res
+        except:
+            pass
+        self.log(f"_iter_java: cannot iterate {type(jlist)} -> []")
+        return []
+
     def _clear_and_cancel(self, params, attr_name=None):
         """Delete command: clear text + CANCEL. Works even if SDK expects params."""
         try:
@@ -273,7 +317,7 @@ class AIJudgePlugin(BasePlugin):
             self.add_on_send_message_hook(priority=100)
         except TypeError:
             self.add_on_send_message_hook()
-        self.log("ИИ Судья загружен. Команда: .суд @user1 @user2 50 / !user (не тегает) v1.0.6")
+        self.log(f"ИИ Судья загружен. Команда: .суд @user1 @user2 50 / !user (не тегает) v{__version__}")
 
     def _on_test_fake_click(self, view=None):
         try:
@@ -994,14 +1038,14 @@ class AIJudgePlugin(BasePlugin):
                 ev.wait(8)
                 resp = holder.get("resp")
                 if resp:
-                    # может быть chat или user
-                    chats = getattr(resp, "chats", []) or []
-                    users = getattr(resp, "users", []) or []
+                    chats_raw = getattr(resp, "chats", []) or []
+                    users_raw = getattr(resp, "users", []) or []
+                    chats = self._iter_java(chats_raw) if not isinstance(chats_raw, list) else chats_raw
+                    users = self._iter_java(users_raw) if not isinstance(users_raw, list) else users_raw
                     if chats:
                         ch = chats[0]
                         cid = getattr(ch, "id", None)
                         if cid:
-                            # channel peer = -100... + cid
                             return -1000000000000 - int(cid)
                     if users:
                         uid = getattr(users[0], "id", None)
@@ -1292,9 +1336,12 @@ class AIJudgePlugin(BasePlugin):
                     break
                 if not resp:
                     break
-                batch = getattr(resp, "messages", None) or []
-                users = getattr(resp, "users", None) or []
-                chats = getattr(resp, "chats", None) or []
+                batch_raw = getattr(resp, "messages", None) or []
+                users_raw = getattr(resp, "users", None) or []
+                chats_raw = getattr(resp, "chats", None) or []
+                batch = self._iter_java(batch_raw) if not isinstance(batch_raw, list) else batch_raw
+                users = self._iter_java(users_raw) if not isinstance(users_raw, list) else users_raw
+                chats = self._iter_java(chats_raw) if not isinstance(chats_raw, list) else chats_raw
                 # мап юзеров для имён
                 user_map = {}
                 for u in users:
@@ -1552,8 +1599,8 @@ class AIJudgePlugin(BasePlugin):
             resp, err = sync_req(req)
             if err or not resp:
                 return None
-            # resp.users contains user
-            users = getattr(resp, "users", []) or []
+            users_raw = getattr(resp, "users", []) or []
+            users = self._iter_java(users_raw) if not isinstance(users_raw, list) else users_raw
             for u in users:
                 un = getattr(u, "username", "") or ""
                 if un.lower() == username.lower():
@@ -1571,7 +1618,25 @@ class AIJudgePlugin(BasePlugin):
             if not c:
                 self.log("storage fallback: no client")
                 return []
-            storage = c.get_messages_storage()
+            storage = None
+            for mname in ["get_messages_storage", "getMessagesStorage", "get_messagesController", "getMessagesController"]:
+                if hasattr(c, mname):
+                    try:
+                        storage = getattr(c, mname)()
+                        if storage:
+                            break
+                    except:
+                        pass
+            if not storage:
+                # пробуем напрямую MessagesStorage.getInstance
+                try:
+                    from org.telegram.messenger import MessagesStorage
+                    storage = MessagesStorage.getInstance(account)
+                except:
+                    pass
+            if not storage:
+                self.log("storage fallback: no storage")
+                return []
             # storage.getMessages(peer_id, ...) — но сигнатура неизвестна, пробуем
             # Альтернатива: MessagesController.getMessages
             # Попробуем storage.query?
