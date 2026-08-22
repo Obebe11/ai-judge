@@ -11,7 +11,7 @@ __id__ = "ai_judge"
 __name__ = "ИИ Судья"
 __description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав. Стелс-мод + тесты."
 __author__ = "@you"
-__version__ = "1.0.7"
+__version__ = "1.0.8"
 __icon__ = "exteraPlugins/1"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.0"
@@ -1307,65 +1307,122 @@ class AIJudgePlugin(BasePlugin):
                 return []
 
     def _get_input_peer(self, account: int, peer_id: int):
-        # 1) через MessagesController — правильный access_hash
+        # 1) через MessagesController — правильный access_hash (учёт AyuGram CamelCase)
         try:
             c = self._get_client_safe(account)
-            mc = c.get_messages_controller()
-            for meth in ["getInputPeer", "getInputPeerById", "getPeer", "getInputPeerForDialog"]:
-                if hasattr(mc, meth):
+            mc = None
+            # пробуем через AccountInstance
+            if c is not None:
+                for mname in ["get_messages_controller", "getMessagesController", "get_messages_storage", "getMessagesStorage"]:
                     try:
-                        ip = getattr(mc, meth)(peer_id)
-                        if ip:
-                            self.log(f"InputPeer via {meth} ok: {ip}")
-                            return ip
-                    except Exception as e:
-                        self.log(f"{meth}({peer_id}) err {e}")
-                        continue
-            # пробуем найти юзера/чат и взять access_hash вручную
-            try:
-                if peer_id > 0:
-                    # user
-                    for um in ["getUser", "getUserById"]:
-                        if hasattr(mc, um):
-                            u = getattr(mc, um)(peer_id)
-                            if u and hasattr(u, "access_hash"):
-                                from org.telegram.tgnet import TLRPC
-                                ip = TLRPC.TL_inputPeerUser()
-                                ip.user_id = peer_id
-                                ip.access_hash = getattr(u, "access_hash", 0) or 0
-                                self.log(f"InputPeerUser via {um} hash={ip.access_hash}")
+                        if hasattr(c, mname):
+                            maybe = getattr(c, mname)
+                            mc = maybe() if callable(maybe) else maybe
+                            if mc and hasattr(mc, "getInputPeer"):
+                                break
+                            if mc and hasattr(mc, "get_input_peer"):
+                                break
+                            # если это Storage — не то, ищем дальше
+                            if mc and "Controller" in str(type(mc)):
+                                break
+                    except:
+                        pass
+                # отдельно попробуем прямые
+                if not mc or not hasattr(mc, "getInputPeer"):
+                    for mname in ["getMessagesController", "get_messages_controller"]:
+                        try:
+                            if hasattr(c, mname):
+                                mc = getattr(c, mname)()
+                                if mc:
+                                    break
+                        except:
+                            pass
+            # 1b) прямо через MessagesController.getInstance(account) (самый надёжный)
+            if not mc or not (hasattr(mc, "getInputPeer") or hasattr(mc, "get_input_peer")):
+                try:
+                    from org.telegram.messenger import MessagesController
+                    mc2 = MessagesController.getInstance(account)
+                    if mc2:
+                        mc = mc2
+                        self.log(f"InputPeer: got MessagesController.getInstance({account})")
+                except Exception as e:
+                    self.log(f"MessagesController.getInstance({account}) failed {e}")
+            if mc:
+                for meth in ["getInputPeer", "get_input_peer", "getInputPeerById", "getPeer", "getInputPeerForDialog"]:
+                    if hasattr(mc, meth):
+                        try:
+                            ip = getattr(mc, meth)(peer_id)
+                            if ip:
+                                self.log(f"InputPeer via {meth} ok: {ip}")
                                 return ip
-                elif peer_id <= -1000000000000:
-                    cid = -peer_id - 1000000000000
-                    for cm in ["getChat", "getChatById", "getGroup"]:
-                        if hasattr(mc, cm):
-                            ch = getattr(mc, cm)(cid)
-                            if ch and hasattr(ch, "access_hash"):
-                                from org.telegram.tgnet import TLRPC
-                                ip = TLRPC.TL_inputPeerChannel()
-                                ip.channel_id = cid
-                                ip.access_hash = getattr(ch, "access_hash", 0) or 0
-                                self.log(f"InputPeerChannel via {cm} hash={ip.access_hash}")
-                                return ip
-            except Exception as e:
-                self.log(f"manual hash fetch err {e}")
+                        except Exception as e:
+                            self.log(f"{meth}({peer_id}) err {e}")
+                            continue
+                # пробуем найти юзера/чат и взять access_hash вручную
+                try:
+                    if peer_id > 0:
+                        for um in ["getUser", "get_user", "getUserById"]:
+                            if hasattr(mc, um):
+                                try:
+                                    u = getattr(mc, um)(peer_id)
+                                    if u and hasattr(u, "access_hash"):
+                                        from org.telegram.tgnet import TLRPC
+                                        ip = TLRPC.TL_inputPeerUser()
+                                        ip.user_id = peer_id
+                                        ip.access_hash = getattr(u, "access_hash", 0) or 0
+                                        self.log(f"InputPeerUser via {um} hash={ip.access_hash}")
+                                        return ip
+                                except Exception as ee:
+                                    self.log(f"{um} err {ee}")
+                    elif peer_id <= -1000000000000:
+                        cid = -peer_id - 1000000000000
+                        for cm in ["getChat", "get_chat", "getChatById", "getGroup"]:
+                            if hasattr(mc, cm):
+                                try:
+                                    ch = getattr(mc, cm)(cid)
+                                    if ch and hasattr(ch, "access_hash"):
+                                        from org.telegram.tgnet import TLRPC
+                                        ip = TLRPC.TL_inputPeerChannel()
+                                        ip.channel_id = cid
+                                        ip.access_hash = getattr(ch, "access_hash", 0) or 0
+                                        self.log(f"InputPeerChannel via {cm} hash={ip.access_hash}")
+                                        return ip
+                                except Exception as ee:
+                                    self.log(f"{cm} err {ee}")
+                except Exception as e:
+                    self.log(f"manual hash fetch err {e}")
+            else:
+                self.log(f"InputPeer: no MessagesController for account {account}")
         except Exception as e:
             self.log(f"getInputPeer via client failed: {e}")
 
-        # 2) fallback через client_utils напрямую (selectedAccount фолбек)
+        # 2) fallback через client_utils напрямую (учёт AyuGram без args)
         try:
             from client_utils import get_messages_controller
-            for acc in [account]:
+            for acc in [account, None]:
+                mc = None
                 try:
-                    mc = get_messages_controller(acc)
-                    for meth in ["getInputPeer", "getInputPeerById"]:
-                        if hasattr(mc, meth):
+                    if acc is not None:
+                        try:
+                            mc = get_messages_controller(acc)
+                        except TypeError:
+                            mc = get_messages_controller()
+                    else:
+                        mc = get_messages_controller()
+                except:
+                    pass
+                if not mc:
+                    continue
+                for meth in ["getInputPeer", "get_input_peer", "getInputPeerById"]:
+                    if hasattr(mc, meth):
+                        try:
                             ip = getattr(mc, meth)(peer_id)
                             if ip:
                                 self.log(f"InputPeer via client_utils {meth} acc={acc} ok")
                                 return ip
-                except:
-                    pass
+                        except Exception as e:
+                            self.log(f"client_utils {meth} err {e}")
+                            pass
         except Exception as e:
             self.log(f"InputPeer via client_utils failed {e}")
 
