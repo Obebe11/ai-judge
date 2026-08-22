@@ -8,7 +8,7 @@
 ![SDK](https://img.shields.io/badge/SDK-1.4.3.0%2B-green)
 ![Python](https://img.shields.io/badge/Python-3.11-yellow)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
-![Version](https://img.shields.io/badge/version-1.0.7-orange)
+![Version](https://img.shields.io/badge/version-1.0.8-orange)
 
 ---
 
@@ -344,7 +344,8 @@ MIT — делай что хочешь, но суд должен остават�
 
 ## 📝 История версий
 
-- **v1.0.7** — Фикс AyuGram (`com.radolyn.ayugram`): `_get_client_safe` / `_get_user_config_safe` (учёт `get_user_config()` без args и `get_selected_account` отсутствует), `Saved 5973118832 OK`, `InputPeer` с реальным `access_hash`, `model` валидация
+- **v1.0.8** — Фикс `AccountInstance.getMessagesController` (AyuGram CamelCase) + `MessagesController.getInstance(account)` + `get_input_peer`/`getUser` без args, теперь `InputPeer=OK` вместо `hash=0 fallback`
+- **v1.0.7** — Фикс AyuGram (`com.radolyn.ayugram`): `_get_client_safe` / `_get_user_config_safe` (учёт `get_user_config()` без args и `get_selected_account` отсутствует), `Saved 5973118832 OK`, `InputPeer` с реальным `access_hash`
 - **v1.0.6** — Нормальные логи: кольцевой буфер 300 + `file_utils` на диск + `.суд логи [N]` / `очистить` + `.суд лог` показывает хвост, поддержка `!user` без тега (`@` и `!` равнозначны), все как `extract_mentions[@!]`
 - **v1.0.5** — Починён реальный чат: `InputPeer` с реальным `access_hash` (через `MessagesController.getUser/getChat`), `.суд лог` — диагностика в Избранное без `adb`, все ошибки дублируются в `Saved` + `Bulletin`, иконка `exteraPlugins/1` (безопасная), `self._last_error` для отладки
 - **v1.0.4** — Починена отправка в Избранное (6 фолбеков для `saved_peer`: `getCurrentUser`/`getClientUserId`/`UserConfig`), стелс по умолчанию ON, команды настройки через чат (`.суд ключ`/`база`/`модель`/`статус`), robust `_safe_send` (4 способа из доки), иконки заменены на безопасные `msg_info`
