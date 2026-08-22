@@ -11,7 +11,7 @@ __id__ = "ai_judge"
 __name__ = "ИИ Судья"
 __description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав. Стелс-мод + тесты."
 __author__ = "@you"
-__version__ = "1.0.9"
+__version__ = "1.0.10"
 __icon__ = "exteraPlugins/1"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.0"
@@ -168,6 +168,28 @@ class AIJudgePlugin(BasePlugin):
             return HookResult(strategy=HookStrategy.CANCEL)
         except:
             return HookResult()
+
+    def _modify_to_started(self, params, attr_name=None):
+        """Меняет команду на '\"Суд запущен\"' — как просил юзер (видимо в чате)"""
+        try:
+            target_text = '"Суд запущен"'
+            if attr_name and hasattr(params, attr_name):
+                setattr(params, attr_name, target_text)
+            elif hasattr(params, "message"):
+                params.message = target_text
+            else:
+                # fallback: пробуем message
+                params.message = target_text
+        except:
+            pass
+        try:
+            return HookResult(strategy=HookStrategy.MODIFY, params=params)
+        except:
+            try:
+                # пробуем MODIFY_FINAL на AyuGram
+                return HookResult(strategy=HookStrategy.MODIFY_FINAL, params=params)
+            except:
+                return self._clear_and_cancel(params, attr_name)
 
     # ---------- логи: запись + передача ----------
     _log_buffer = []
@@ -744,18 +766,16 @@ class AIJudgePlugin(BasePlugin):
                     pass
                 return self._clear_and_cancel(params, attr)
 
-            # Отменяем отправку команды, запускаем суд в фоне
+            # Меняем команду на "Суд запущен" (как просил юзер) и запускаем суд в фоне
             self.log(f"Суд вызван: peer={peer_id} reply={reply_id} mentions={mentions} limit={limit} account={account}")
-
-            # Запускаем в фоне, чтобы не морозить UI — reply_id уже int
             try:
                 from client_utils import run_on_queue, PLUGINS_QUEUE
                 run_on_queue(lambda: self._run_court(account, int(peer_id), int(reply_id), mentions, limit), PLUGINS_QUEUE)
             except Exception:
                 from client_utils import run_on_queue
                 run_on_queue(lambda: self._run_court(account, int(peer_id), int(reply_id), mentions, limit))
-
-            return self._clear_and_cancel(params, attr)
+            # в реальном чате команда должна исчезнуть или стать "Суд запущен" — делаем MODIFY
+            return self._modify_to_started(params, attr)
 
         except Exception as e:
             self.log(f"on_send_message_hook error: {e}")

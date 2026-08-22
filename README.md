@@ -8,7 +8,7 @@
 ![SDK](https://img.shields.io/badge/SDK-1.4.3.0%2B-green)
 ![Python](https://img.shields.io/badge/Python-3.11-yellow)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
-![Version](https://img.shields.io/badge/version-1.0.9-orange)
+![Version](https://img.shields.io/badge/version-1.0.10-orange)
 
 ---
 
@@ -344,7 +344,8 @@ MIT — делай что хочешь, но суд должен остават�
 
 ## 📝 История версий
 
-- **v1.0.9** — Фикс реального чата `MessageObject` (`int() argument must be ... not 'MessageObject'`): `_extract_int_id` + `raw_reply`/`raw_peer` парсинг, `peer=5973118832 InputPeer=OK` теперь работает с `.суд !C3H2O 50`
+- **v1.0.10** — Команда в реальном чате теперь `MODIFY` → `'"Суд запущен"'` (как просил), вместо `CANCEL` — видно всем, суд идёт в `Saved` если стелс
+- **v1.0.9** — Фикс `MessageObject` (`int() ... not 'MessageObject'`): `_extract_int_id` + `raw_reply`/`raw_peer`, теперь `.суд !C3H2O 50` в группе работает
 - **v1.0.8** — Фикс `AccountInstance.getMessagesController` (AyuGram CamelCase) + `MessagesController.getInstance(account)` + `get_input_peer`/`getUser` без args, теперь `InputPeer=OK` вместо `hash=0 fallback`
 - **v1.0.7** — Фикс AyuGram (`com.radolyn.ayugram`): `_get_client_safe` / `_get_user_config_safe` (учёт `get_user_config()` без args и `get_selected_account` отсутствует), `Saved 5973118832 OK`, `InputPeer` с реальным `access_hash`
 - **v1.0.6** — Нормальные логи: кольцевой буфер 300 + `file_utils` на диск + `.суд логи [N]` / `очистить` + `.суд лог` показывает хвост, поддержка `!user` без тега (`@` и `!` равнозначны), все как `extract_mentions[@!]`
