@@ -11,7 +11,7 @@ __id__ = "ai_judge"
 __name__ = "ИИ Судья"
 __description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав. Стелс-мод + тесты."
 __author__ = "@you"
-__version__ = "1.0.8"
+__version__ = "1.0.9"
 __icon__ = "exteraPlugins/1"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.0"
@@ -106,6 +106,50 @@ class AIJudgePlugin(BasePlugin):
         except:
             pass
         return None, None
+
+    def _extract_int_id(self, v):
+        """Вытаскивает int id из любого типа: int, str, MessageObject, TLRPC, etc."""
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return v
+        if isinstance(v, str):
+            try:
+                if v.lstrip("-").isdigit():
+                    return int(v)
+            except:
+                pass
+            return None
+        # пробуем поля объекта
+        for attr in ("id", "message_id", "msg_id", "reply_to_msg_id", "replyToMsg", "getId", "getMessageId", "messageId", "mid"):
+            try:
+                val = getattr(v, attr, None)
+                if callable(val):
+                    val = val()
+                if isinstance(val, int) and val != 0:
+                    return val
+                if isinstance(val, str) and val.lstrip("-").isdigit():
+                    return int(val)
+            except:
+                pass
+        # MessageObject → messageOwner
+        try:
+            mo = getattr(v, "messageOwner", None)
+            if mo is not None:
+                for attr in ("id", "message_id"):
+                    try:
+                        val = getattr(mo, attr, None)
+                        if isinstance(val, int) and val != 0:
+                            return val
+                    except:
+                        pass
+        except:
+            pass
+        # fallback int(v) — но если MessageObject, упадёт
+        try:
+            return int(v)
+        except:
+            return None
 
     def _clear_and_cancel(self, params, attr_name=None):
         """Delete command: clear text + CANCEL. Works even if SDK expects params."""
@@ -597,22 +641,48 @@ class AIJudgePlugin(BasePlugin):
             except:
                 pass
 
-            # peer и reply id
-            peer_id = getattr(params, "peer", None)
-            # в некоторых версиях поле называется dialog_id / peerId
-            if peer_id is None:
-                peer_id = getattr(params, "dialog_id", None)
-            if peer_id is None:
-                peer_id = getattr(params, "peerId", None)
+            # peer и reply id — используем _extract_int_id для MessageObject
+            raw_peer = getattr(params, "peer", None)
+            if raw_peer is None:
+                raw_peer = getattr(params, "dialog_id", None)
+            if raw_peer is None:
+                raw_peer = getattr(params, "peerId", None)
+            if raw_peer is None:
+                raw_peer = getattr(params, "dialogId", None)
+            peer_id = self._extract_int_id(raw_peer)
+            if peer_id is None and raw_peer is not None:
+                # raw_peer может быть InputPeer объектом — пробуем позже через фрагмент
+                self.log(f"peer raw type {type(raw_peer)} -> extract None, will fallback via fragment")
+                peer_id = None
 
-            reply_id = getattr(params, "replyToMsg", None)
-            if reply_id is None:
-                reply_id = getattr(params, "reply_to_msg_id", None)
-            if reply_id is None:
-                # попробуем достать из replyTo
-                rt = getattr(params, "replyTo", None)
-                if rt is not None:
-                    reply_id = getattr(rt, "reply_to_msg_id", None) or getattr(rt, "message_id", None)
+            raw_reply = getattr(params, "replyToMsg", None)
+            if raw_reply is None:
+                raw_reply = getattr(params, "reply_to_msg_id", None)
+            if raw_reply is None:
+                raw_reply = getattr(params, "replyTo", None)
+            if raw_reply is None:
+                raw_reply = getattr(params, "reply_to", None)
+            reply_id = self._extract_int_id(raw_reply)
+            if reply_id is None and raw_reply is not None:
+                # пробуем достать из вложенного replyTo -> message_id
+                try:
+                    rt = raw_reply
+                    for attr in ("reply_to_msg_id", "message_id", "id", "getId"):
+                        try:
+                            v = getattr(rt, attr, None)
+                            if callable(v):
+                                v = v()
+                            if isinstance(v, int) and v != 0:
+                                reply_id = v
+                                break
+                        except:
+                            pass
+                except:
+                    pass
+            if reply_id is not None:
+                self.log(f"reply extract raw={type(raw_reply).__name__} -> id={reply_id}")
+            else:
+                self.log(f"reply extract failed raw={type(raw_reply).__name__ if raw_reply else None} attrs={[a for a in dir(raw_reply)[:20]] if raw_reply else []}")
 
             # если peer не смогли взять из params — попробуем из фрагмента
             if peer_id is None:
@@ -643,8 +713,8 @@ class AIJudgePlugin(BasePlugin):
                     pass
                 return self._clear_and_cancel(params, attr)
 
-            if not reply_id or int(reply_id) == 0:
-                self.log(f"no reply_id for .суд — raw={raw}")
+            if not reply_id or reply_id == 0:
+                self.log(f"no reply_id for .суд — raw={raw} reply_raw={raw_reply} peer={peer_id}")
                 try:
                     from ui.bulletin import BulletinHelper
                     BulletinHelper.show_info("❗️ ИИ Судья: отправь .суд ответом на сообщение")
@@ -677,13 +747,13 @@ class AIJudgePlugin(BasePlugin):
             # Отменяем отправку команды, запускаем суд в фоне
             self.log(f"Суд вызван: peer={peer_id} reply={reply_id} mentions={mentions} limit={limit} account={account}")
 
-            # Запускаем в фоне, чтобы не морозить UI
+            # Запускаем в фоне, чтобы не морозить UI — reply_id уже int
             try:
                 from client_utils import run_on_queue, PLUGINS_QUEUE
-                run_on_queue(lambda: self._run_court(account, peer_id, int(reply_id), mentions, limit), PLUGINS_QUEUE)
+                run_on_queue(lambda: self._run_court(account, int(peer_id), int(reply_id), mentions, limit), PLUGINS_QUEUE)
             except Exception:
                 from client_utils import run_on_queue
-                run_on_queue(lambda: self._run_court(account, peer_id, int(reply_id), mentions, limit))
+                run_on_queue(lambda: self._run_court(account, int(peer_id), int(reply_id), mentions, limit))
 
             return self._clear_and_cancel(params, attr)
 
