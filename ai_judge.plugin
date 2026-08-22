@@ -11,7 +11,7 @@ __id__ = "ai_judge"
 __name__ = "ИИ Судья"
 __description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав. Стелс-мод + тесты."
 __author__ = "@you"
-__version__ = "1.0.14"
+__version__ = "1.0.15"
 __icon__ = "exteraPlugins/1"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.0"
@@ -294,9 +294,17 @@ class AIJudgePlugin(BasePlugin):
         return "лог пуст (ещё нет событий)"
 
     def _get_log_file(self):
-        """Надёжный путь к ai_judge_logs.txt — пробует data/cache/files + /tmp"""
+        """Надёжный путь к ai_judge_logs.txt — пробует Download (видно) + data/cache + /tmp"""
         import pathlib
         candidates = []
+        # 0) публичный Download — видно в файловом менеджере без root
+        try:
+            import os
+            candidates.append(pathlib.Path("/storage/emulated/0/Download"))
+            candidates.append(pathlib.Path("/sdcard/Download"))
+            candidates.append(pathlib.Path("/storage/emulated/0/Documents"))
+        except:
+            pass
         try:
             from file_utils import get_data_dir
             try:
@@ -316,6 +324,7 @@ class AIJudgePlugin(BasePlugin):
         try:
             import os
             candidates.append(pathlib.Path("/data/data/com.radolyn.ayugram/files"))
+            candidates.append(pathlib.Path("/data/data/com.radolyn.ayugram/cache"))
             candidates.append(pathlib.Path("/data/data/com.exteragram.messenger/files"))
             candidates.append(pathlib.Path("/tmp"))
         except:
@@ -323,10 +332,10 @@ class AIJudgePlugin(BasePlugin):
         for d in candidates:
             try:
                 if d and d.exists():
+                    # для Download — сразу пишем туда, видно
                     return d / "ai_judge_logs.txt"
             except:
                 pass
-        # fallback
         import pathlib, tempfile
         return pathlib.Path(tempfile.gettempdir()) / "ai_judge_logs.txt"
 
@@ -678,7 +687,7 @@ class AIJudgePlugin(BasePlugin):
                 return self._clear_and_cancel(params, attr)
 
             if re.match(r"^[\.\/!](суд|court|judge)\s+логи\b", raw, re.IGNORECASE):
-                # .суд логи [N] [txt|файл] [очистить] — передача буфера
+                # .суд логи [N] [txt|файл|путь] [очистить] — передача буфера
                 m = re.match(r"^[\.\/!](?:суд|court|judge)\s+логи\s*(.*)$", raw, re.IGNORECASE | re.DOTALL)
                 rest = (m.group(1).strip() if m else "").lower()
                 if rest in ("очистить", "clear", "очистка", "reset"):
@@ -691,6 +700,18 @@ class AIJudgePlugin(BasePlugin):
                         BulletinHelper.show_info("Логи очищены")
                     except:
                         pass
+                    return self._clear_and_cancel(params, attr)
+                if any(x in rest for x in ("путь", "где", "path", "location")):
+                    p = self._get_log_file()
+                    sp = self._get_saved_peer(account) or getattr(params, "peer", None)
+                    if sp:
+                        self._safe_send(account, sp, f"📁 Лог файл: <code>{p}</code>\nРазмер: {p.stat().st_size if p.exists() else 0} байт\n<code>.суд логи txt</code> — отправить файлом в Избранное\nПуть в файловом менеджере: <code>Download/ai_judge_logs.txt</code>", None, parse_mode="HTML")
+                    try:
+                        from ui.bulletin import BulletinHelper
+                        BulletinHelper.show_info(f"Логи: {p}")
+                    except:
+                        pass
+                    self.log(f"логи путь запрошен -> {p}")
                     return self._clear_and_cancel(params, attr)
                 # txt / файл — отправить как txt файл (нормально смотрится)
                 if any(x in rest for x in ("txt", "файл", "file", "тхт", "документ")):
@@ -707,8 +728,14 @@ class AIJudgePlugin(BasePlugin):
                     target = sp or getattr(params, "peer", None)
                     if target:
                         ok = self._send_logs_as_file(account, target, n)
+                        if ok:
+                            # дополнительно шлём путь где лежит
+                            try:
+                                p = self._get_log_file()
+                                self._safe_send(account, target, f"📁 Файл также лежит: <code>{p}</code>\nОткрой через файловый менеджер → Download", None, parse_mode="HTML")
+                            except:
+                                pass
                         if not ok:
-                            # fallback уже внутри _send_logs_as_file шлёт текстом
                             pass
                     else:
                         try:
