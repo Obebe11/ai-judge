@@ -11,7 +11,7 @@ __id__ = "ai_judge"
 __name__ = "ИИ Судья"
 __description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав. Стелс-мод + тесты."
 __author__ = "@you"
-__version__ = "1.0.15"
+__version__ = "1.0.16"
 __icon__ = "exteraPlugins/1"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.0"
@@ -1355,8 +1355,7 @@ class AIJudgePlugin(BasePlugin):
             self.log(f"Стелс-мод активен: original={peer_id} -> target={target_peer}")
 
         # 1. Суд уже запущен (команда стала '"Суд запущен"' в чате), поэтому не дублируем "созывается" в чат
-        # логируем только
-        self.log(f"Суд: собираю {limit} после #{reply_msg_id} peer={peer_id} stealth={stealth}")
+        self.log(f"Суд: сканирую 1000 после #{reply_msg_id} peer={peer_id} stealth={stealth} -> выберу {limit} релевантных по {mentions}")
 
         # 2. Соберём сообщения (всегда из оригинального чата)
         messages = self._fetch_history(account, peer_id, reply_msg_id, limit, mentions)
@@ -1377,8 +1376,8 @@ class AIJudgePlugin(BasePlugin):
         # 3. Анонимизация
         anon_transcript, mapping, reverse_mapping, participants_human = self._anonymize(messages, mentions)
 
-        # 4. Вызов LLM
-        self._send_status(account, target_peer, f"🔍 Собрано {len(messages)} сообщений. Судья изучает доводы…{stealth_info}", target_reply)
+        # 4. Вызов LLM — показываем сколько отобрали из 1000
+        self._send_status(account, target_peer, f"🔍 Сканировал 1000 → отобрано {len(messages)} релевантных (из {mentions if mentions else 'всех'}). Судья изучает…{stealth_info}", target_reply)
 
         verdict_json, raw_llm = self._call_llm(anon_transcript, participants_human)
 
@@ -1451,23 +1450,22 @@ class AIJudgePlugin(BasePlugin):
                         wanted_ids.add(uid)
                 self.log(f"mentions {mentions} -> ids {wanted_ids}")
 
-            # Фетчим — делаем батчами, т.к. нужен фильтр по юзерам и min_id
+            # Фетчим — сканируем 1000 после реплая, потом выберем N релевантных по никам
+            SCAN_LIMIT = 1000
             fetched = []
-            # TL_messages_getHistory параметры: peer, offset_id, offset_date, add_offset, limit, max_id, min_id, hash
-            # Хотим сообщения новее reply_msg_id -> min_id = reply_msg_id, offset_id = 0, limit = limit+50
             tries = 0
             offset_id = 0
             max_id = 0
             min_id = reply_msg_id
-            need = limit + 20  # запас для фильтра
-            while len(fetched) < need and tries < 4:
+            need = SCAN_LIMIT
+            while len(fetched) < need and tries < 10:
                 tries += 1
                 req = TLRPC.TL_messages_getHistory()
                 req.peer = input_peer
                 req.offset_id = offset_id
                 req.offset_date = 0
                 req.add_offset = 0
-                req.limit = min(100, need - len(fetched) + 10)
+                req.limit = min(100, need - len(fetched))
                 req.max_id = max_id
                 req.min_id = min_id
                 req.hash = 0
@@ -1554,17 +1552,16 @@ class AIJudgePlugin(BasePlugin):
 
             # сортировка по id возрастанию (хронология)
             fetched.sort(key=lambda x: x["id"])
-            # фильтр по участникам если указаны
+            total_scanned = len(fetched)
+            # выбираем N релевантных из 1000
             if wanted_ids:
                 filtered = [m for m in fetched if m["from_id"] in wanted_ids]
-                # если после фильтра меньше limit — берём что есть, но пробуем добрать?
-                # если filtered слишком мало — возьмём всё с пометкой
-                if len(filtered) >= max(1, limit // 3):
-                    fetched = filtered[:limit]
-                else:
-                    # недостаточно сообщений от указанных — берём все, но предупредим позже
-                    fetched = filtered[:limit] if filtered else fetched[:limit]
+                self.log(f"scan {total_scanned} -> filtered {len(filtered)} by {wanted_ids} -> take {limit}")
+                fetched = filtered[:limit]
+                if not fetched:
+                    self.log(f"filtered пусто (из {total_scanned}), возвращаю пусто -> fallback")
             else:
+                self.log(f"scan {total_scanned} -> take {limit} без фильтра")
                 fetched = fetched[:limit]
 
             # если всё ещё пусто — fallback

@@ -8,7 +8,7 @@
 ![SDK](https://img.shields.io/badge/SDK-1.4.3.0%2B-green)
 ![Python](https://img.shields.io/badge/Python-3.11-yellow)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
-![Version](https://img.shields.io/badge/version-1.0.15-orange)
+![Version](https://img.shields.io/badge/version-1.0.16-orange)
 
 ---
 
@@ -344,6 +344,7 @@ MIT — делай что хочешь, но суд должен остават�
 
 ## 📝 История версий
 
+- **v1.0.16** — Сканирует `1000` сообщений после реплая, выбирает `N` релевантных по никам (`@`/`!`), `SCAN_LIMIT=1000` `tries=10` `filtered[:limit]`
 - **v1.0.15** — Логи txt теперь в `Download/ai_judge_logs.txt` (видно без root) + `.суд логи путь` показывает где лежит, логируется всё (было `хуево` — резалось), файл отправляется как документ в `Избранное`
 - **v1.0.14** — Логи в `txt`: `_get_log_file()` + `_send_logs_as_file` (`send_message path/document`), `.суд логи txt` / `файл` отправляет `ai_judge_logs.txt` как документ, нормально смотрится в клиенте
 - **v1.0.13** — Промпт: вердикт ≤10 предложений (`verdict+reasoning+advice ≤10`), технически: `TL_messages_getHistory min_id=reply_id` строго после реплая (`mid>reply_id`, сортировка `id` возрастание) — теперь работает на `peer=-2491864850` после фиксов `1.0.11`
