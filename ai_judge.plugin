@@ -11,7 +11,7 @@ __id__ = "ai_judge"
 __name__ = "ИИ Судья"
 __description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав. Стелс-мод + тесты."
 __author__ = "@you"
-__version__ = "1.0.11"
+__version__ = "1.0.12"
 __icon__ = "exteraPlugins/1"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.0"
@@ -786,11 +786,11 @@ class AIJudgePlugin(BasePlugin):
                     BulletinHelper.show_info("❗️ ИИ Судья: отправь .суд ответом на сообщение")
                 except:
                     pass
-                # подсказка в тот же чат как отдельное сообщение (не модифицируя команду)
+                # только в Избранное, не срать в чат
                 try:
-                    stealth = bool(self.get_setting("stealth_mode", True))
-                    hint_peer = self._resolve_stealth_target(account, peer_id) if stealth else peer_id
-                    self._safe_send(account, hint_peer, "❗️ ИИ Судья: отправь <code>.суд</code> <b>ответом</b> на сообщение, ПОСЛЕ которого начинается срач.\nПример: ответь на сообщение → <code>.суд @user1 @user2 50</code>", None, parse_mode="HTML")
+                    sp = self._get_saved_peer(account)
+                    if sp:
+                        self._safe_send(account, sp, "❗️ ИИ Судья: отправь <code>.суд</code> <b>ответом</b> на сообщение, ПОСЛЕ которого начинается срач.\nПример: ответь на сообщение → <code>.суд @user1 @user2 50</code>", None, parse_mode="HTML")
                 except:
                     pass
                 return self._clear_and_cancel(params, attr)
@@ -804,8 +804,9 @@ class AIJudgePlugin(BasePlugin):
                 except:
                     pass
                 try:
-                    sp = self._get_saved_peer(account) or peer_id
-                    self._safe_send(account, sp, "❗️ ИИ Судья: укажи API ключ в настройках (Настройки → Плагины → ИИ Судья)", None, parse_mode="HTML")
+                    sp = self._get_saved_peer(account)
+                    if sp:
+                        self._safe_send(account, sp, "❗️ ИИ Судья: укажи API ключ через <code>.суд ключ KEY</code> или Настройки → Плагины → ИИ Судья", None, parse_mode="HTML")
                 except:
                     pass
                 return self._clear_and_cancel(params, attr)
@@ -1217,20 +1218,24 @@ class AIJudgePlugin(BasePlugin):
                 pass
             self.log(f"Стелс-мод активен: original={peer_id} -> target={target_peer}")
 
-        # 1. Сообщим что суд созывается
-        self._send_status(account, target_peer, f"🏛 <b>ИИ Суд созывается…</b>\nСобираю {limit} сообщений после #{reply_msg_id}{stealth_info}…", target_reply)
+        # 1. Суд уже запущен (команда стала '"Суд запущен"' в чате), поэтому не дублируем "созывается" в чат
+        # логируем только
+        self.log(f"Суд: собираю {limit} после #{reply_msg_id} peer={peer_id} stealth={stealth}")
 
         # 2. Соберём сообщения (всегда из оригинального чата)
         messages = self._fetch_history(account, peer_id, reply_msg_id, limit, mentions)
         if not messages:
-            err = getattr(self, "_last_error", "") or "пустой ответ от TL_messages_getHistory (hash 0 или нет прав)"
+            err = getattr(self, "_last_error", "") or "пустой ответ от TL_messages_getHistory"
             self._last_error = err
-            self._send_status(account, target_peer, f"❌ ИИ Суд: не удалось собрать сообщения после #{reply_msg_id} в чате {peer_id}. Возможно нет новых сообщений или нет доступа к истории.{stealth_info}\n<code>{str(err)[:600].replace('<','&lt;')}</code>\nПопробуй <code>.суд лог</code> или <code>.суд тест</code>", target_reply)
-            # дублируем в Saved если стелс выкл
-            if not stealth:
-                sp = self._get_saved_peer(account)
-                if sp and sp != target_peer:
-                    self._safe_send(account, sp, f"❌ Суд в чате {peer_id} упал: {str(err)[:800].replace('<','&lt;')}", None, parse_mode="HTML")
+            # ошибки — только в Избранное, не срать в чат
+            sp = self._get_saved_peer(account)
+            if sp:
+                self._safe_send(account, sp, f"❌ ИИ Суд: не удалось собрать сообщения после #{reply_msg_id} в чате {peer_id}. Возможно нет новых сообщений или нет доступа к истории.{stealth_info}\n<code>{str(err)[:600].replace('<','&lt;')}</code>\nПопробуй <code>.суд лог</code> или <code>.суд тест</code>", None, parse_mode="HTML")
+            try:
+                from ui.bulletin import BulletinHelper
+                BulletinHelper.show_info("❌ Суд: не удалось собрать историю — смотри Избранное")
+            except:
+                pass
             return
 
         # 3. Анонимизация

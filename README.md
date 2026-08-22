@@ -8,7 +8,7 @@
 ![SDK](https://img.shields.io/badge/SDK-1.4.3.0%2B-green)
 ![Python](https://img.shields.io/badge/Python-3.11-yellow)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
-![Version](https://img.shields.io/badge/version-1.0.11-orange)
+![Version](https://img.shields.io/badge/version-1.0.12-orange)
 
 ---
 
@@ -344,6 +344,7 @@ MIT — делай что хочешь, но суд должен остават�
 
 ## 📝 История версий
 
+- **v1.0.12** — Ошибки только в `Избранное` (не срать в чат), убран дубль `Суд запущен` (теперь только `MODIFY` → `'"Суд запущен"'`, без `Созывается`), `no reply`/`no api` только в `Saved`
 - **v1.0.11** — Фикс `ArrayList not iterable` (AyuGram Java): `_iter_java` для `messages/users/chats`, `resolve` и `storage` CamelCase, теперь `peer=-2491864850 Channel OK` и `mentions → ids` работают
 - **v1.0.10** — Команда в реальном чате теперь `MODIFY` → `'"Суд запущен"'` (как просил), вместо `CANCEL` — видно всем, суд идёт в `Saved` если стелс
 - **v1.0.9** — Фикс `MessageObject` (`int() ... not 'MessageObject'`): `_extract_int_id` + `raw_reply`/`raw_peer`, теперь `.суд !C3H2O 50` в группе работает
