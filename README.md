@@ -8,7 +8,7 @@
 ![SDK](https://img.shields.io/badge/SDK-1.4.3.0%2B-green)
 ![Python](https://img.shields.io/badge/Python-3.11-yellow)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
-![Version](https://img.shields.io/badge/version-1.0.17-orange)
+![Version](https://img.shields.io/badge/version-1.0.18-orange)
 
 ---
 
@@ -344,6 +344,7 @@ MIT — делай что хочешь, но суд должен остават�
 
 ## 📝 История версий
 
+- **v1.0.18** — Стелс без следов: `stealth=True` → `CANCEL` (команда удаляется бесследно), `stealth=False` → `MODIFY '"Суд запущен"'` — тестируй в реале без засорения
 - **v1.0.17** — Логи по дефолту **файлом** в `Избранное` (не `HTML` блок), `.суд логи` → `ai_judge_logs.txt` как документ, `txt`/`файл` тоже файлом
 - **v1.0.16** — Сканирует `1000` сообщений после реплая, выбирает `N` релевантных по никам (`@`/`!`), `SCAN_LIMIT=1000` `tries=10` `filtered[:limit]`
 - **v1.0.15** — Логи txt теперь в `Download/ai_judge_logs.txt` (видно без root) + `.суд логи путь` показывает где лежит, логируется всё (было `хуево` — резалось), файл отправляется как документ в `Избранное`

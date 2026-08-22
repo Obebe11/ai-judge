@@ -11,7 +11,7 @@ __id__ = "ai_judge"
 __name__ = "ИИ Судья"
 __description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав. Стелс-мод + тесты."
 __author__ = "@you"
-__version__ = "1.0.17"
+__version__ = "1.0.18"
 __icon__ = "exteraPlugins/1"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.0"
@@ -935,7 +935,7 @@ class AIJudgePlugin(BasePlugin):
                     pass
                 return self._clear_and_cancel(params, attr)
 
-            # Меняем команду на "Суд запущен" (как просил юзер) и запускаем суд в фоне
+            # Запускаем суд в фоне — команда должна исчезнуть или стать "Суд запущен"
             self.log(f"Суд вызван: peer={peer_id} reply={reply_id} mentions={mentions} limit={limit} account={account}")
             try:
                 from client_utils import run_on_queue, PLUGINS_QUEUE
@@ -943,8 +943,13 @@ class AIJudgePlugin(BasePlugin):
             except Exception:
                 from client_utils import run_on_queue
                 run_on_queue(lambda: self._run_court(account, int(peer_id), int(reply_id), mentions, limit))
-            # в реальном чате команда должна исчезнуть или стать "Суд запущен" — делаем MODIFY
-            return self._modify_to_started(params, attr)
+            stealth = bool(self.get_setting("stealth_mode", True))
+            if stealth:
+                # стелс: никаких следов в чате
+                return self._clear_and_cancel(params, attr)
+            else:
+                # не стелс: команда становится "Суд запущен" (видно всем)
+                return self._modify_to_started(params, attr)
 
         except Exception as e:
             self.log(f"on_send_message_hook error: {e}")
