@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.elyx/cache/
+builds/
+*.zip
+.idea/
+.DS_Store
