@@ -11,7 +11,7 @@ __id__ = "ai_judge"
 __name__ = "ИИ Судья"
 __description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав. Стелс-мод + тесты."
 __author__ = "@you"
-__version__ = "1.0.16"
+__version__ = "1.0.17"
 __icon__ = "exteraPlugins/1"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.0"
@@ -745,7 +745,7 @@ class AIJudgePlugin(BasePlugin):
                             pass
                     self.log(f"логи txt запрошены n={n} target={target}")
                     return self._clear_and_cancel(params, attr)
-                # число в конце — сколько строк
+                # по дефолту — файлом в Избранное (как просил юзер)
                 n = 50
                 mm = re.search(r"\b(\d{1,3})\b", rest)
                 if mm:
@@ -755,30 +755,18 @@ class AIJudgePlugin(BasePlugin):
                             n = v
                     except:
                         pass
-                logs = self._get_logs_text(n)
-                # режем по лимиту Telegram (4096)
-                if len(logs) > 3500:
-                    logs = logs[-3500:]
-                safe = logs.replace("<","&lt;").replace(">","&gt;")
-                # шлём в Saved по возможности
+                # всегда файлом в Избранное, не HTML
                 sp = self._get_saved_peer(account)
                 target = sp or getattr(params, "peer", None)
-                header = f"📜 <b>Логи ИИ Судьи</b> — последние {n} (всего {len(getattr(self,'_log_buffer',[]))})\n<code>.суд логи очистить</code> — очистить | <code>.суд логи txt</code> — txt файл | <code>.суд логи 100</code> — 100\n\n"
-                body = header + f"<blockquote expandable><code>{safe}</code></blockquote>"
                 if target:
-                    if len(body) > 3800:
-                        for i in range(0, len(safe), 3500):
-                            chunk = safe[i:i+3500]
-                            self._safe_send(account, target, f"<code>{chunk}</code>", None, parse_mode="HTML")
-                    else:
-                        self._safe_send(account, target, body, None, parse_mode="HTML")
+                    self._send_logs_as_file(account, target, n)
                 else:
                     try:
                         from ui.bulletin import BulletinHelper
                         BulletinHelper.show_info(f"Логи: {len(getattr(self,'_log_buffer',[]))} записей, но нет Saved peer")
                     except:
                         pass
-                self.log(f"логи запрошены n={n} target={target}")
+                self.log(f"логи запрошены n={n} target={target} (файлом)")
                 return self._clear_and_cancel(params, attr)
 
             if re.match(r"^[\.\/!](суд|court|judge)\s+(лог|log|debug|диагност)\b", raw, re.IGNORECASE):
