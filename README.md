@@ -8,7 +8,7 @@
 ![SDK](https://img.shields.io/badge/SDK-1.4.3.0%2B-green)
 ![Python](https://img.shields.io/badge/Python-3.11-yellow)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
-![Version](https://img.shields.io/badge/version-1.0.4-orange)
+![Version](https://img.shields.io/badge/version-1.0.5-orange)
 
 ---
 
@@ -343,6 +343,7 @@ MIT — делай что хочешь, но суд должен остават�
 
 ## 📝 История версий
 
+- **v1.0.5** — Починён реальный чат: `InputPeer` с реальным `access_hash` (через `MessagesController.getUser/getChat`), `.суд лог` — диагностика в Избранное без `adb`, все ошибки дублируются в `Saved` + `Bulletin`, иконка `exteraPlugins/1` (безопасная), `self._last_error` для отладки
 - **v1.0.4** — Починена отправка в Избранное (6 фолбеков для `saved_peer`: `getCurrentUser`/`getClientUserId`/`UserConfig`), стелс по умолчанию ON, команды настройки через чат (`.суд ключ`/`база`/`модель`/`статус`), robust `_safe_send` (4 способа из доки), иконки заменены на безопасные `msg_info`
 - **v1.0.3** — Исправлено удаление команды (теперь всегда CANCEL + очистка `params.message`, работает на SDK 1.4.3.3), добавлена иконка весов ⚖️ (`exteraPlugins/27` + `icon.png/svg`), ошибки показывают буллетень/Избранное а не спамят в чат
 - **v1.0.2** — Анонимизация теперь неотключаема (честный суд), добавлено тестирование: команды `.суд тест` / `.суд пинг` + кнопки в настройках (`🧪 Тестовый суд`, `🔍 Проверить LLM`), синтетический срач для проверки пайплайна

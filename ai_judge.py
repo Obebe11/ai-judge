@@ -11,8 +11,8 @@ __id__ = "ai_judge"
 __name__ = "ИИ Судья"
 __description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав. Стелс-мод + тесты."
 __author__ = "@you"
-__version__ = "1.0.4"
-__icon__ = "exteraPlugins/27"
+__version__ = "1.0.5"
+__icon__ = "exteraPlugins/1"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.0"
 __requirements__ = ["requests"]
@@ -125,12 +125,13 @@ class AIJudgePlugin(BasePlugin):
             return HookResult()
 
     def on_plugin_load(self):
+        self._last_error = ""
         # high priority so we run before other plugins
         try:
             self.add_on_send_message_hook(priority=100)
         except TypeError:
             self.add_on_send_message_hook()
-        self.log("ИИ Судья загружен. Команда: .суд @user1 @user2 50 (ответом на сообщение)")
+        self.log("ИИ Судья загружен. Команда: .суд @user1 @user2 50 (ответом на сообщение) v1.0.5")
 
     def _on_test_fake_click(self, view=None):
         try:
@@ -222,7 +223,8 @@ class AIJudgePlugin(BasePlugin):
             Header(text="Тестирование (без чата)"),
             Text(text="🧪 Тестовый суд — фейковый срач", subtext="Запустит суд на синтетических данных, проверит LLM", icon="msg_info", on_click=self._on_test_fake_click),
             Text(text="🔍 Проверить LLM (пинг)", subtext="Отправит тестовый запрос к API и покажет ответ в Избранном", icon="msg_info", on_click=self._on_test_llm_click),
-            Text(text="Команды в чате", subtext=".суд тест — фейковый срач\n.суд пинг — проверка LLM\n.суд ключ KEY — сохранить ключ\n.суд база URL — сменить Base URL\n.суд модель NAME — сменить модель\n.суд статус — показать настройки", icon="msg_info"),
+            Text(text="🧾 Диагностика (.суд лог) — без adb", subtext="Покажет Saved peer, InputPeer, последнюю ошибку", icon="msg_info", on_click=self._on_test_llm_click),
+            Text(text="Команды в чате", subtext=".суд тест — фейковый срач\n.суд пинг — проверка LLM\n.суд ключ KEY — сохранить ключ\n.суд база URL — сменить Base URL\n.суд модель NAME — сменить модель\n.суд статус — показать настройки\n.суд лог — диагностика", icon="msg_info"),
         ]
 
     # ---------- hooks ----------
@@ -390,10 +392,50 @@ class AIJudgePlugin(BasePlugin):
                 return self._clear_and_cancel(params, attr)
 
             if re.match(r"^[\.\/!](суд|court|judge)\s+(помощь|help|хелп)\b", raw, re.IGNORECASE):
-                help_text = "📖 <b>ИИ Судья — помощь</b>\n\n<b>Реальный суд (ответом):</b>\n<code>.суд @user1 @user2 50</code> — 50 сообщений после реплая\n\n<b>Тесты (без реплая):</b>\n<code>.суд тест</code> — фейковый срач\n<code>.суд пинг</code> — проверка LLM\n\n<b>Настройки через чат:</b>\n<code>.суд ключ sk-...</code>\n<code>.суд база https://...</code>\n<code>.суд модель gpt-4o-mini</code>\n<code>.суд статус</code> — показать\n\nАнонимизация всегда включена 🔒"
+                help_text = "📖 <b>ИИ Судья — помощь</b>\n\n<b>Реальный суд (ответом):</b>\n<code>.суд @user1 @user2 50</code> — 50 сообщений после реплая\n\n<b>Тесты (без реплая):</b>\n<code>.суд тест</code> — фейковый срач\n<code>.суд пинг</code> — проверка LLM\n\n<b>Настройки через чат:</b>\n<code>.суд ключ sk-...</code>\n<code>.суд база https://...</code>\n<code>.суд модель gpt-4o-mini</code>\n<code>.суд статус</code> — показать\n<code>.суд лог</code> — диагностика (без adb)\n\nАнонимизация всегда включена 🔒"
                 target = self._get_saved_peer(account) or getattr(params, "peer", None)
                 if target:
                     self._safe_send(account, target, help_text, None, parse_mode="HTML")
+                return self._clear_and_cancel(params, attr)
+
+            if re.match(r"^[\.\/!](суд|court|judge)\s+(лог|log|debug|диагност)\b", raw, re.IGNORECASE):
+                cur_key = self.get_setting("api_key", "") or ""
+                masked = (cur_key[:7]+"…"+cur_key[-4:] + f" ({len(cur_key)})" if len(cur_key)>12 else ("пусто" if not cur_key else "скрыт"))
+                base = self.get_setting("base_url", DEFAULT_BASE_URL)
+                model = self.get_setting("model", DEFAULT_MODEL)
+                sp = self._get_saved_peer(account)
+                # пробуем InputPeer диагностику
+                peer_diag = "n/a"
+                try:
+                    pid = getattr(params, "peer", None) or getattr(params, "dialog_id", None)
+                    if pid is None:
+                        try:
+                            from client_utils import get_last_fragment
+                            frag = get_last_fragment(account)
+                            pid = frag.getDialogId() if frag and hasattr(frag, "getDialogId") else None
+                        except:
+                            pid = None
+                    if pid is not None:
+                        ip = self._get_input_peer(account, int(pid))
+                        peer_diag = f"peer={pid} InputPeer={'OK' if ip else 'FAIL (≈hash 0)'}"
+                    else:
+                        peer_diag = "peer не определён (нет dialog_id)"
+                except Exception as e:
+                    peer_diag = f"diag err {e}"
+                last_err = getattr(self, "_last_error", "") or "нет"
+                if len(last_err) > 800:
+                    last_err = last_err[:800]+"…"
+                diag = f"🧾 <b>ИИ Судья — лог</b>\n🔑 Ключ: <code>{masked}</code>\n🔗 Base: <code>{base}</code>\n🤖 Модель: <code>{model}</code>\n👤 Saved: <code>{sp}</code> (account {account})\n📍 Текущий чат: {peer_diag}\n⚠️ Последняя ошибка: <code>{last_err.replace('<','&lt;')}</code>\n\nЕсли Saved=None — зайди в Избранное руками и повтори <code>.суд лог</code>"
+                target = sp or getattr(params, "peer", None)
+                if target:
+                    self._safe_send(account, target, diag, None, parse_mode="HTML")
+                else:
+                    try:
+                        from ui.bulletin import BulletinHelper
+                        BulletinHelper.show_info(f"Лог: Saved={sp} {peer_diag[:60]}")
+                    except:
+                        pass
+                self.log(f"diag requested sp={sp} {peer_diag} last_err={last_err[:200]}")
                 return self._clear_and_cancel(params, attr)
 
             parsed = parse_sud_command(raw)
@@ -822,7 +864,14 @@ class AIJudgePlugin(BasePlugin):
         # 2. Соберём сообщения (всегда из оригинального чата)
         messages = self._fetch_history(account, peer_id, reply_msg_id, limit, mentions)
         if not messages:
-            self._send_status(account, target_peer, f"❌ ИИ Суд: не удалось собрать сообщения после #{reply_msg_id} в чате {peer_id}. Возможно нет новых сообщений или нет доступа к истории.{stealth_info}", target_reply)
+            err = getattr(self, "_last_error", "") or "пустой ответ от TL_messages_getHistory (hash 0 или нет прав)"
+            self._last_error = err
+            self._send_status(account, target_peer, f"❌ ИИ Суд: не удалось собрать сообщения после #{reply_msg_id} в чате {peer_id}. Возможно нет новых сообщений или нет доступа к истории.{stealth_info}\n<code>{str(err)[:600].replace('<','&lt;')}</code>\nПопробуй <code>.суд лог</code> или <code>.суд тест</code>", target_reply)
+            # дублируем в Saved если стелс выкл
+            if not stealth:
+                sp = self._get_saved_peer(account)
+                if sp and sp != target_peer:
+                    self._safe_send(account, sp, f"❌ Суд в чате {peer_id} упал: {str(err)[:800].replace('<','&lt;')}", None, parse_mode="HTML")
             return
 
         # 3. Анонимизация
@@ -1024,58 +1073,101 @@ class AIJudgePlugin(BasePlugin):
 
         except Exception as e:
             self.log(f"_fetch_history err: {e}")
+            self._last_error = f"_fetch_history {e}"
             try:
                 return self._fetch_history_via_storage(account, peer_id, reply_msg_id, limit)
             except Exception as e2:
                 self.log(f"fallback also failed: {e2}")
+                self._last_error = f"fallback {e2}"
                 return []
 
     def _get_input_peer(self, account: int, peer_id: int):
+        # 1) через MessagesController — правильный access_hash
         try:
-            # через client
             c = self.client(account)
             mc = c.get_messages_controller()
-            # пробуем разные имена
-            for meth in ["getInputPeer", "getInputPeerById", "getPeer"]:
+            for meth in ["getInputPeer", "getInputPeerById", "getPeer", "getInputPeerForDialog"]:
                 if hasattr(mc, meth):
                     try:
                         ip = getattr(mc, meth)(peer_id)
                         if ip:
+                            self.log(f"InputPeer via {meth} ok: {ip}")
                             return ip
                     except Exception as e:
+                        self.log(f"{meth}({peer_id}) err {e}")
                         continue
+            # пробуем найти юзера/чат и взять access_hash вручную
+            try:
+                if peer_id > 0:
+                    # user
+                    for um in ["getUser", "getUserById"]:
+                        if hasattr(mc, um):
+                            u = getattr(mc, um)(peer_id)
+                            if u and hasattr(u, "access_hash"):
+                                from org.telegram.tgnet import TLRPC
+                                ip = TLRPC.TL_inputPeerUser()
+                                ip.user_id = peer_id
+                                ip.access_hash = getattr(u, "access_hash", 0) or 0
+                                self.log(f"InputPeerUser via {um} hash={ip.access_hash}")
+                                return ip
+                elif peer_id <= -1000000000000:
+                    cid = -peer_id - 1000000000000
+                    for cm in ["getChat", "getChatById", "getGroup"]:
+                        if hasattr(mc, cm):
+                            ch = getattr(mc, cm)(cid)
+                            if ch and hasattr(ch, "access_hash"):
+                                from org.telegram.tgnet import TLRPC
+                                ip = TLRPC.TL_inputPeerChannel()
+                                ip.channel_id = cid
+                                ip.access_hash = getattr(ch, "access_hash", 0) or 0
+                                self.log(f"InputPeerChannel via {cm} hash={ip.access_hash}")
+                                return ip
+            except Exception as e:
+                self.log(f"manual hash fetch err {e}")
         except Exception as e:
             self.log(f"getInputPeer via client failed: {e}")
 
-        # ручной конструкт через TLRPC
+        # 2) fallback через client_utils напрямую (selectedAccount фолбек)
+        try:
+            from client_utils import get_messages_controller
+            for acc in [account]:
+                try:
+                    mc = get_messages_controller(acc)
+                    for meth in ["getInputPeer", "getInputPeerById"]:
+                        if hasattr(mc, meth):
+                            ip = getattr(mc, meth)(peer_id)
+                            if ip:
+                                self.log(f"InputPeer via client_utils {meth} acc={acc} ok")
+                                return ip
+                except:
+                    pass
+        except Exception as e:
+            self.log(f"InputPeer via client_utils failed {e}")
+
+        # 3) ручной конструкт с 0 hash — последний шанс (часто не проходит, но пробуем)
         try:
             from org.telegram.tgnet import TLRPC
-            # Определим тип peer_id
-            # peer_id >0 = user, peer_id <0 и > -1000000000000 = chat, иначе channel
-            # Но для простоты попробуем TL_inputPeerUser / Channel / Chat
             if peer_id > 0:
                 ip = TLRPC.TL_inputPeerUser()
                 ip.user_id = peer_id
-                # access_hash нужен, без него запрос может не пройти — поэтому лучше через controller
-                # попробуем поставить 0
                 if hasattr(ip, "access_hash"):
                     ip.access_hash = 0
+                self.log(f"InputPeer manual user {peer_id} hash=0 fallback")
                 return ip
             elif peer_id < 0:
-                # channel id в dialog_id хранится как -100 + id
-                # peer_id = -1000000000000 - channelId? Точная формула: dialog_id = -1000000000000 - channel_id для каналов?
-                # Попробуем восстановить
                 if peer_id <= -1000000000000:
                     channel_id = -peer_id - 1000000000000
                     ip = TLRPC.TL_inputPeerChannel()
                     ip.channel_id = channel_id
                     if hasattr(ip, "access_hash"):
                         ip.access_hash = 0
+                    self.log(f"InputPeer manual channel {channel_id} hash=0 fallback")
                     return ip
                 else:
                     chat_id = -peer_id
                     ip = TLRPC.TL_inputPeerChat()
                     ip.chat_id = chat_id
+                    self.log(f"InputPeer manual chat {chat_id}")
                     return ip
         except Exception as e:
             self.log(f"manual InputPeer failed: {e}")
