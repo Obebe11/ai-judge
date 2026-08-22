@@ -11,10 +11,10 @@ __id__ = "ai_judge"
 __name__ = "ИИ Судья"
 __description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав."
 __author__ = "@you"
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 __icon__ = "exteraPlugins/7"
 __app_version__ = ">=12.5.1"
-__sdk_version__ = ">=1.4.5.0"
+__sdk_version__ = ">=1.4.3.0"
 __requirements__ = ["requests"]
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
@@ -778,24 +778,27 @@ class AIJudgePlugin(BasePlugin):
 
     def _safe_send(self, account, peer_id, text, reply_id=None, parse_mode="HTML"):
         try:
-            c = self.client(account)
-            # пробуем через client
-            kwargs = {}
-            if reply_id:
-                kwargs["replyToMsg"] = int(reply_id)
-            # пробуем разные сигнатуры
+            # SDK >=1.4.5 имеет self.client(account); на старых — сразу fallback
             try:
-                c.send_text(peer_id, text, parse_mode=parse_mode, **kwargs)
-                return
-            except TypeError as e:
-                # fallback без parse_mode
-                try:
-                    c.send_text(peer_id, text, **kwargs)
-                    return
-                except:
-                    pass
+                c = self.client(account)
             except Exception as e:
-                self.log(f"client.send_text failed: {e}")
+                c = None
+
+            if c is not None:
+                kwargs = {}
+                if reply_id:
+                    kwargs["replyToMsg"] = int(reply_id)
+                try:
+                    c.send_text(peer_id, text, parse_mode=parse_mode, **kwargs)
+                    return
+                except TypeError:
+                    try:
+                        c.send_text(peer_id, text, **kwargs)
+                        return
+                    except Exception:
+                        pass
+                except Exception as e:
+                    self.log(f"client.send_text failed: {e}")
 
             # fallback через глобальную функцию
             from client_utils import send_text
