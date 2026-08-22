@@ -11,7 +11,7 @@ __id__ = "ai_judge"
 __name__ = "ИИ Судья"
 __description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав. Стелс-мод + тесты."
 __author__ = "@you"
-__version__ = "1.0.5"
+__version__ = "1.0.6"
 __icon__ = "exteraPlugins/1"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.0"
@@ -41,7 +41,8 @@ DEFAULT_PROMPT = """Ты — беспристрастный ИИ-Судья дл
 # ------------ helpers outside class ------------
 
 def extract_mentions(text: str):
-    return re.findall(r"@([A-Za-z0-9_]{4,32})", text)
+    # поддерживает @ и ! ( ! не тегает, но попадает в wanted_ids )
+    return re.findall(r"[@!]([A-Za-z0-9_]{4,32})", text)
 
 def parse_sud_command(text: str):
     """
@@ -124,14 +125,89 @@ class AIJudgePlugin(BasePlugin):
         except:
             return HookResult()
 
+    # ---------- логи: запись + передача ----------
+    _log_buffer = []
+    _log_max = 300
+
+    def log(self, msg):
+        # пишем в системный лог + в кольцевой буфер для .суд логи
+        try:
+            super().log(msg)
+        except:
+            try:
+                from base_plugin import BasePlugin as BP
+                BP.log(self, msg)
+            except:
+                pass
+        try:
+            ts = time.strftime("%H:%M:%S", time.localtime())
+            entry = f"[{ts}] {msg}"
+            # используем классовый буфер но дублируем на инстанс для надёжности
+            if not hasattr(self, "_log_buffer") or self._log_buffer is None:
+                self._log_buffer = []
+            # если это классовый — копируем
+            if isinstance(self.__class__._log_buffer, list) and self._log_buffer is self.__class__._log_buffer:
+                pass
+            self._log_buffer.append(entry)
+            # режем
+            if len(self._log_buffer) > self._log_max:
+                self._log_buffer = self._log_buffer[-self._log_max:]
+            # зеркалим в класс
+            self.__class__._log_buffer = self._log_buffer
+            if "err" in msg.lower() or "fail" in msg.lower() or "❌" in msg or "error" in msg.lower():
+                self._last_error = msg
+            # пробуем писать на диск для переживания рестарта (не критично)
+            try:
+                from file_utils import get_data_dir
+                import pathlib
+                p = pathlib.Path(get_data_dir()) / "ai_judge_logs.txt"
+                with open(p, "a", encoding="utf-8") as f:
+                    f.write(entry + "\n")
+            except:
+                pass
+        except:
+            pass
+
+    def _get_logs_text(self, n=50):
+        buf = getattr(self, "_log_buffer", []) or []
+        if not buf:
+            # пробуем с диска
+            try:
+                from file_utils import get_data_dir
+                import pathlib
+                p = pathlib.Path(get_data_dir()) / "ai_judge_logs.txt"
+                if p.exists():
+                    lines = p.read_text(encoding="utf-8").splitlines()[-n:]
+                    return "\n".join(lines) if lines else "лог пуст"
+            except:
+                pass
+            return "лог пуст (ещё нет событий)"
+        return "\n".join(buf[-n:])
+
+    def _clear_logs(self):
+        self._log_buffer = []
+        self.__class__._log_buffer = []
+        self._last_error = ""
+        try:
+            from file_utils import get_data_dir
+            import pathlib
+            p = pathlib.Path(get_data_dir()) / "ai_judge_logs.txt"
+            if p.exists():
+                p.write_text("", encoding="utf-8")
+        except:
+            pass
+        self.log("логи очищены")
+
     def on_plugin_load(self):
         self._last_error = ""
+        if not hasattr(self, "_log_buffer") or self._log_buffer is None:
+            self._log_buffer = []
         # high priority so we run before other plugins
         try:
             self.add_on_send_message_hook(priority=100)
         except TypeError:
             self.add_on_send_message_hook()
-        self.log("ИИ Судья загружен. Команда: .суд @user1 @user2 50 (ответом на сообщение) v1.0.5")
+        self.log("ИИ Судья загружен. Команда: .суд @user1 @user2 50 / !user (не тегает) v1.0.6")
 
     def _on_test_fake_click(self, view=None):
         try:
@@ -392,10 +468,62 @@ class AIJudgePlugin(BasePlugin):
                 return self._clear_and_cancel(params, attr)
 
             if re.match(r"^[\.\/!](суд|court|judge)\s+(помощь|help|хелп)\b", raw, re.IGNORECASE):
-                help_text = "📖 <b>ИИ Судья — помощь</b>\n\n<b>Реальный суд (ответом):</b>\n<code>.суд @user1 @user2 50</code> — 50 сообщений после реплая\n\n<b>Тесты (без реплая):</b>\n<code>.суд тест</code> — фейковый срач\n<code>.суд пинг</code> — проверка LLM\n\n<b>Настройки через чат:</b>\n<code>.суд ключ sk-...</code>\n<code>.суд база https://...</code>\n<code>.суд модель gpt-4o-mini</code>\n<code>.суд статус</code> — показать\n<code>.суд лог</code> — диагностика (без adb)\n\nАнонимизация всегда включена 🔒"
+                help_text = "📖 <b>ИИ Судья — помощь</b>\n\n<b>Реальный суд (ответом):</b>\n<code>.суд @alice @bob 50</code> или <code>.суд !alice !bob 50</code> — ! не тегает\n50 сообщений после реплая\n\n<b>Тесты (без реплая):</b>\n<code>.суд тест</code> — фейковый срач\n<code>.суд пинг</code> — проверка LLM\n\n<b>Настройки через чат:</b>\n<code>.суд ключ sk-...</code>\n<code>.суд база https://...</code>\n<code>.суд модель gpt-4o-mini</code>\n<code>.суд статус</code> — показать\n<code>.суд лог</code> — диагностика\n<code>.суд логи [N] / очистить</code> — буфер логов\n\nАнонимизация всегда включена 🔒"
                 target = self._get_saved_peer(account) or getattr(params, "peer", None)
                 if target:
                     self._safe_send(account, target, help_text, None, parse_mode="HTML")
+                return self._clear_and_cancel(params, attr)
+
+            if re.match(r"^[\.\/!](суд|court|judge)\s+логи\b", raw, re.IGNORECASE):
+                # .суд логи [N] [очистить] — передача буфера
+                m = re.match(r"^[\.\/!](?:суд|court|judge)\s+логи\s*(.*)$", raw, re.IGNORECASE | re.DOTALL)
+                rest = (m.group(1).strip() if m else "").lower()
+                if rest in ("очистить", "clear", "очистка", "reset"):
+                    self._clear_logs()
+                    sp = self._get_saved_peer(account) or getattr(params, "peer", None)
+                    if sp:
+                        self._safe_send(account, sp, "🗑 Логи очищены", None, parse_mode="HTML")
+                    try:
+                        from ui.bulletin import BulletinHelper
+                        BulletinHelper.show_info("Логи очищены")
+                    except:
+                        pass
+                    return self._clear_and_cancel(params, attr)
+                # число в конце — сколько строк
+                n = 50
+                mm = re.search(r"\b(\d{1,3})\b", rest)
+                if mm:
+                    try:
+                        v = int(mm.group(1))
+                        if 5 <= v <= 300:
+                            n = v
+                    except:
+                        pass
+                logs = self._get_logs_text(n)
+                # режем по лимиту Telegram (4096)
+                if len(logs) > 3500:
+                    logs = logs[-3500:]
+                safe = logs.replace("<","&lt;").replace(">","&gt;")
+                # шлём в Saved по возможности
+                sp = self._get_saved_peer(account)
+                target = sp or getattr(params, "peer", None)
+                header = f"📜 <b>Логи ИИ Судьи</b> — последние {n} (всего {len(getattr(self,'_log_buffer',[]))})\n<code>.суд логи очистить</code> — очистить\n<code>.суд логи 100</code> — показать 100\n\n"
+                body = header + f"<blockquote expandable><code>{safe}</code></blockquote>"
+                if target:
+                    # если длинно — шлём кусками
+                    if len(body) > 3800:
+                        for i in range(0, len(safe), 3500):
+                            chunk = safe[i:i+3500]
+                            self._safe_send(account, target, f"<code>{chunk}</code>", None, parse_mode="HTML")
+                    else:
+                        self._safe_send(account, target, body, None, parse_mode="HTML")
+                else:
+                    try:
+                        from ui.bulletin import BulletinHelper
+                        BulletinHelper.show_info(f"Логи: {len(getattr(self,'_log_buffer',[]))} записей, но нет Saved peer")
+                    except:
+                        pass
+                self.log(f"логи запрошены n={n} target={target}")
                 return self._clear_and_cancel(params, attr)
 
             if re.match(r"^[\.\/!](суд|court|judge)\s+(лог|log|debug|диагност)\b", raw, re.IGNORECASE):
@@ -425,7 +553,13 @@ class AIJudgePlugin(BasePlugin):
                 last_err = getattr(self, "_last_error", "") or "нет"
                 if len(last_err) > 800:
                     last_err = last_err[:800]+"…"
-                diag = f"🧾 <b>ИИ Судья — лог</b>\n🔑 Ключ: <code>{masked}</code>\n🔗 Base: <code>{base}</code>\n🤖 Модель: <code>{model}</code>\n👤 Saved: <code>{sp}</code> (account {account})\n📍 Текущий чат: {peer_diag}\n⚠️ Последняя ошибка: <code>{last_err.replace('<','&lt;')}</code>\n\nЕсли Saved=None — зайди в Избранное руками и повтори <code>.суд лог</code>"
+                # последние 5 логов
+                tail = "\n".join(getattr(self, "_log_buffer", [])[-5:])
+                if tail:
+                    tail = "\nПоследние логи:\n<code>" + tail.replace("<","&lt;")[-600:] + "</code>"
+                else:
+                    tail = ""
+                diag = f"🧾 <b>ИИ Судья — лог</b>\n🔑 Ключ: <code>{masked}</code>\n🔗 Base: <code>{base}</code>\n🤖 Модель: <code>{model}</code>\n👤 Saved: <code>{sp}</code> (account {account})\n📍 Текущий чат: {peer_diag}\n⚠️ Последняя ошибка: <code>{last_err.replace('<','&lt;')}</code>{tail}\n\n<code>.суд логи</code> — все логи\n<code>.суд логи 100</code>\nЕсли Saved=None — зайди в Избранное руками и повтори <code>.суд лог</code>"
                 target = sp or getattr(params, "peer", None)
                 if target:
                     self._safe_send(account, target, diag, None, parse_mode="HTML")
