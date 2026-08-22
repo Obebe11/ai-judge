@@ -1,3 +1,5 @@
+<p align="center"><img src="icon.png" width="128" height="128" alt="ИИ Судья иконка — весы"></p>
+
 # 🏛 ИИ Судья — честный суд для срачей в Telegram
 
 > Плагин для [exteraGram](https://plugins.exteragram.app) который **беспристрастно** решает кто прав в сраче. Судья не знает кто есть кто — судит только по аргументам, фактам и логике.
@@ -6,7 +8,7 @@
 ![SDK](https://img.shields.io/badge/SDK-1.4.3.0%2B-green)
 ![Python](https://img.shields.io/badge/Python-3.11-yellow)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
-![Version](https://img.shields.io/badge/version-1.0.2-orange)
+![Version](https://img.shields.io/badge/version-1.0.3-orange)
 
 ---
 
@@ -299,6 +301,8 @@ ai_judge.py          — однофайловый плагин (ставь эт�
 ai_judge.plugin      — копия .py с расширением .plugin (для загрузки как .plugin)
 ai_judge.elyx        — Elyx-архив (refmap + metainfo + main.py) — официальный формат
 ai_judge_elyx.plugin — тот же Elyx-архив переименованный в .plugin
+icon.png / icon.svg  — иконка весов ⚖️ (512px + вектор)
+icon_128.png         — превью 128px
 README.md            — этот файл
 ```
 
@@ -330,6 +334,7 @@ MIT — делай что хочешь, но суд должен остават�
 
 ## 📝 История версий
 
+- **v1.0.3** — Исправлено удаление команды (теперь всегда CANCEL + очистка `params.message`, работает на SDK 1.4.3.3), добавлена иконка весов ⚖️ (`exteraPlugins/27` + `icon.png/svg`), ошибки показывают буллетень/Избранное а не спамят в чат
 - **v1.0.2** — Анонимизация теперь неотключаема (честный суд), добавлено тестирование: команды `.суд тест` / `.суд пинг` + кнопки в настройках (`🧪 Тестовый суд`, `🔍 Проверить LLM`), синтетический срач для проверки пайплайна
 - **v1.0.1** — Понижен `sdk_version` 1.4.5.0 → 1.4.3.0 (фикс `Plugin requires sdk version >=1.4.5.0, but current is 1.4.3.3`), guard `self.client()` для старых SDK
 - **v1.0.0** — Первый релиз: `.суд @user 50` с `min_id`, слепой суд, макросы, стелс-мод

@@ -11,8 +11,8 @@ __id__ = "ai_judge"
 __name__ = "ИИ Судья"
 __description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав. Стелс-мод + тесты."
 __author__ = "@you"
-__version__ = "1.0.2"
-__icon__ = "exteraPlugins/7"
+__version__ = "1.0.3"
+__icon__ = "exteraPlugins/27"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.0"
 __requirements__ = ["requests"]
@@ -74,8 +74,62 @@ def parse_sud_command(text: str):
 
 
 class AIJudgePlugin(BasePlugin):
+    def _get_msg_text(self, params):
+        """Robustly extract message text from params (handles SDK variations)"""
+        for attr in ("message", "text", "caption", "msg"):
+            try:
+                v = getattr(params, attr, None)
+                if isinstance(v, str) and v.strip():
+                    return v, attr
+            except:
+                pass
+        # dict-like fallback
+        try:
+            if isinstance(params, dict):
+                for k in ("message", "text"):
+                    v = params.get(k)
+                    if isinstance(v, str) and v.strip():
+                        return v, k
+        except:
+            pass
+        # Try via hook_utils reflection if available
+        try:
+            from hook_utils import get_field
+            for attr in ("message", "text"):
+                try:
+                    v = get_field(params, attr)
+                    if isinstance(v, str) and v.strip():
+                        return v, attr
+                except:
+                    pass
+        except:
+            pass
+        return None, None
+
+    def _clear_and_cancel(self, params, attr_name=None):
+        """Delete command: clear text + CANCEL. Works even if SDK expects params."""
+        try:
+            if attr_name and hasattr(params, attr_name):
+                setattr(params, attr_name, "")
+            elif hasattr(params, "message"):
+                params.message = ""
+        except:
+            pass
+        try:
+            return HookResult(strategy=HookStrategy.CANCEL, params=params)
+        except:
+            pass
+        try:
+            return HookResult(strategy=HookStrategy.CANCEL)
+        except:
+            return HookResult()
+
     def on_plugin_load(self):
-        self.add_on_send_message_hook()
+        # high priority so we run before other plugins
+        try:
+            self.add_on_send_message_hook(priority=100)
+        except TypeError:
+            self.add_on_send_message_hook()
         self.log("ИИ Судья загружен. Команда: .суд @user1 @user2 50 (ответом на сообщение)")
 
     def _on_test_fake_click(self, view=None):
@@ -142,19 +196,20 @@ class AIJudgePlugin(BasePlugin):
     # ---------- hooks ----------
     def on_send_message_hook(self, account: int, params: Any) -> HookResult:
         try:
-            msg = getattr(params, "message", None)
-            if not isinstance(msg, str):
+            raw, attr = self._get_msg_text(params)
+            if raw is None:
                 return HookResult()
-            raw = msg.strip()
+            raw = raw.strip()
             if not re.match(r"^[\.\/!](суд|court|judge)\b", raw, re.IGNORECASE):
                 return HookResult()
 
-            # --- тестовые команды (работают без реплая) ---
+            self.log(f"ИИ Суд: перехвачено '{raw[:80]}' attr={attr} account={account}")
+
+            # --- тестовые команды (работают без реплая) — всегда удаляем ---
             low = raw.lower().strip()
             # .суд тест / .судтест / .суд test / .court test / .суд пинг / .суд ping
             if low in (".суд тест", ".судтест", ".суд test", ".court test", ".judge test", "/суд тест", "!суд тест"):
                 self.log(f"Тестовая команда: {raw} account={account}")
-                # peer для ответа — текущий чат если есть, иначе Избранное
                 test_peer = getattr(params, "peer", None) or getattr(params, "dialog_id", None)
                 if test_peer is None:
                     try:
@@ -164,14 +219,13 @@ class AIJudgePlugin(BasePlugin):
                             test_peer = frag.getDialogId() if hasattr(frag, "getDialogId") else None
                     except:
                         pass
-                # если не нашли — уйдёт в Избранное внутри _run_fake_test
                 try:
                     from client_utils import run_on_queue, PLUGINS_QUEUE
                     run_on_queue(lambda: self._run_fake_test(account, test_peer), PLUGINS_QUEUE)
                 except:
                     from client_utils import run_on_queue
                     run_on_queue(lambda: self._run_fake_test(account, test_peer))
-                return HookResult(strategy=HookStrategy.CANCEL)
+                return self._clear_and_cancel(params, attr)
 
             if low in (".суд пинг", ".суд ping", ".court ping", ".judge ping", "/суд пинг"):
                 self.log(f"Пинг LLM: {raw} account={account}")
@@ -190,7 +244,7 @@ class AIJudgePlugin(BasePlugin):
                 except:
                     from client_utils import run_on_queue
                     run_on_queue(lambda: self._run_llm_ping(account, ping_peer))
-                return HookResult(strategy=HookStrategy.CANCEL)
+                return self._clear_and_cancel(params, attr)
 
             parsed = parse_sud_command(raw)
             if not parsed:
@@ -237,22 +291,55 @@ class AIJudgePlugin(BasePlugin):
                 except Exception as e:
                     self.log(f"peer fallback failed: {e}")
 
+            # ошибки — теперь тоже удаляем команду и показываем буллетень/Избранное, а не спамим в чат
             if peer_id is None:
-                # не смогли определить чат — модифицируем сообщение с подсказкой
-                params.message = "❗️ ИИ Судья: не удалось определить чат. Отправь .суд ответом на сообщение в группе."
-                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+                self.log("peer_id is None — не удалось определить чат")
+                try:
+                    from ui.bulletin import BulletinHelper
+                    BulletinHelper.show_info("❗️ ИИ Судья: не удалось определить чат. Открой чат и отправь .суд ответом.")
+                except:
+                    pass
+                # пробуем отправить подсказку в Избранное
+                try:
+                    sp = self._get_saved_peer(account)
+                    if sp:
+                        self._safe_send(account, sp, "❗️ ИИ Судья: не удалось определить чат для команды <code>.суд</code> — открой нужный чат и отправь ответом.", None, parse_mode="HTML")
+                except:
+                    pass
+                return self._clear_and_cancel(params, attr)
 
             if not reply_id or int(reply_id) == 0:
-                params.message = "❗️ ИИ Судья: отправь .суд <b>ответом</b> на сообщение, ПОСЛЕ которого начинается срач.\nПример: ответь на сообщение → `.суд @user1 @user2 50`"
-                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+                self.log(f"no reply_id for .суд — raw={raw}")
+                try:
+                    from ui.bulletin import BulletinHelper
+                    BulletinHelper.show_info("❗️ ИИ Судья: отправь .суд ответом на сообщение")
+                except:
+                    pass
+                # подсказка в тот же чат как отдельное сообщение (не модифицируя команду)
+                try:
+                    stealth = bool(self.get_setting("stealth_mode", False))
+                    hint_peer = self._resolve_stealth_target(account, peer_id) if stealth else peer_id
+                    self._safe_send(account, hint_peer, "❗️ ИИ Судья: отправь <code>.суд</code> <b>ответом</b> на сообщение, ПОСЛЕ которого начинается срач.\nПример: ответь на сообщение → <code>.суд @user1 @user2 50</code>", None, parse_mode="HTML")
+                except:
+                    pass
+                return self._clear_and_cancel(params, attr)
 
             api_key = (self.get_setting("api_key", "") or "").strip()
             if not api_key:
-                params.message = "❗️ ИИ Судья: укажи API ключ в настройках плагина (Настройки → Плагины → ИИ Судья)"
-                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+                self.log("no api_key")
+                try:
+                    from ui.bulletin import BulletinHelper
+                    BulletinHelper.show_info("❗️ ИИ Судья: укажи API ключ в настройках")
+                except:
+                    pass
+                try:
+                    sp = self._get_saved_peer(account) or peer_id
+                    self._safe_send(account, sp, "❗️ ИИ Судья: укажи API ключ в настройках (Настройки → Плагины → ИИ Судья)", None, parse_mode="HTML")
+                except:
+                    pass
+                return self._clear_and_cancel(params, attr)
 
             # Отменяем отправку команды, запускаем суд в фоне
-            # Сначала скажем что суд собирается (через очередь)
             self.log(f"Суд вызван: peer={peer_id} reply={reply_id} mentions={mentions} limit={limit} account={account}")
 
             # Запускаем в фоне, чтобы не морозить UI
@@ -263,7 +350,7 @@ class AIJudgePlugin(BasePlugin):
                 from client_utils import run_on_queue
                 run_on_queue(lambda: self._run_court(account, peer_id, int(reply_id), mentions, limit))
 
-            return HookResult(strategy=HookStrategy.CANCEL)
+            return self._clear_and_cancel(params, attr)
 
         except Exception as e:
             self.log(f"on_send_message_hook error: {e}")
