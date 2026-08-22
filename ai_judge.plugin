@@ -9,9 +9,9 @@ from ui.settings import Header, Input, Text, Switch, Divider, Selector
 
 __id__ = "ai_judge"
 __name__ = "ИИ Судья"
-__description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав."
+__description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав. Стелс-мод + тесты."
 __author__ = "@you"
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 __icon__ = "exteraPlugins/7"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.0"
@@ -78,10 +78,48 @@ class AIJudgePlugin(BasePlugin):
         self.add_on_send_message_hook()
         self.log("ИИ Судья загружен. Команда: .суд @user1 @user2 50 (ответом на сообщение)")
 
+    def _on_test_fake_click(self, view=None):
+        try:
+            from ui.bulletin import BulletinHelper
+            BulletinHelper.show_info("🧪 Запускаю тестовый суд...")
+        except:
+            pass
+        self.log("Тест: фейковый срач запущен из настроек")
+        try:
+            from client_utils import run_on_queue, PLUGINS_QUEUE, get_selected_account
+            # пробуем взять текущий аккаунт
+            try:
+                acc = get_selected_account()
+            except:
+                acc = 0
+            run_on_queue(lambda: self._run_fake_test(acc), PLUGINS_QUEUE)
+        except Exception:
+            from client_utils import run_on_queue
+            run_on_queue(lambda: self._run_fake_test(0))
+
+    def _on_test_llm_click(self, view=None):
+        try:
+            from ui.bulletin import BulletinHelper
+            BulletinHelper.show_info("🔍 Проверяю LLM...")
+        except:
+            pass
+        self.log("Тест: проверка LLM запущена из настроек")
+        try:
+            from client_utils import run_on_queue, PLUGINS_QUEUE, get_selected_account
+            try:
+                acc = get_selected_account()
+            except:
+                acc = 0
+            run_on_queue(lambda: self._run_llm_ping(acc), PLUGINS_QUEUE)
+        except Exception:
+            from client_utils import run_on_queue
+            run_on_queue(lambda: self._run_llm_ping(0))
+
     def create_settings(self) -> List[Any]:
         return [
             Header(text="ИИ Судья — настройки"),
             Text(text="Команда: ответь на сообщение в чате `.суд @юзер1 @юзер2 50` — бот возьмёт 50 сообщений ПОСЛЕ реплая, анонимизирует и вынесет вердикт.", subtext="Работает только когда ты отправляешь команду", icon="msg_info"),
+            Text(text="🔒 Анонимизация включена всегда", subtext="Судья НЕ видит реальные ники (Сторона A/B). Отключить нельзя — для честности", icon="msg_secret", red=False),
             Divider(),
             Header(text="LLM API (OpenAI-совместимый)"),
             Input(key="api_key", text="API ключ", default="", subtext="Ключ от OpenAI / OpenRouter / др. Хранится локально", icon="msg_key"),
@@ -92,10 +130,13 @@ class AIJudgePlugin(BasePlugin):
             Header(text="Промпт судьи"),
             Input(key="system_prompt", text="Системный промпт (оставь пустым = дефолт)", default="", subtext="Если заполнишь — заменит дефолтный. Используй {transcript} не нужно — он подставится автоматически.", icon="msg_text"),
             Switch(key="show_transcript", text="Прикладывать анонимизированный транскрипт к вердикту", default=False, subtext="Полезно для отладки", icon="msg_view_file"),
-            Switch(key="anonymous_mode", text="Анонимный суд", default=True, subtext="Если вкл — судья не видит реальные ники, только Сторона A/B", icon="msg_secret"),
-            Switch(key="stealth_mode", text="Стелс-мод (тест)", default=False, subtext="Вердикт уходит в Избранное, а не в чат. Для теста без палева", icon="msg_secret"),
+            Switch(key="stealth_mode", text="Стелс-мод (в Избранное)", default=False, subtext="Вердикт уходит в Избранное, а не в чат. Для теста без палева", icon="msg_secret"),
             Input(key="stealth_peer", text="Куда слать в стелсе (оставь пусто = Избранное)", default="", subtext="ID диалога или @username. Пусто = Saved Messages", icon="msg_forward"),
-            Text(text="Тест: напиши в любом чате (себе) .суд 5 ответом на сообщение", subtext="Вердикт придёт в тот же чат (или в Избранное если стелс)", icon="msg_info"),
+            Divider(),
+            Header(text="Тестирование (без чата)"),
+            Text(text="🧪 Тестовый суд — фейковый срач", subtext="Запустит суд на синтетических данных, проверит LLM", icon="msg_info", on_click=self._on_test_fake_click),
+            Text(text="🔍 Проверить LLM (пинг)", subtext="Отправит тестовый запрос к API и покажет ответ в Избранном", icon="msg_settings", on_click=self._on_test_llm_click),
+            Text(text="Команды в чате", subtext=".суд тест — фейковый срач в чате\n.суд пинг — проверка LLM\n.суд 5 (ответом) — реальный суд", icon="msg_text"),
         ]
 
     # ---------- hooks ----------
@@ -107,6 +148,49 @@ class AIJudgePlugin(BasePlugin):
             raw = msg.strip()
             if not re.match(r"^[\.\/!](суд|court|judge)\b", raw, re.IGNORECASE):
                 return HookResult()
+
+            # --- тестовые команды (работают без реплая) ---
+            low = raw.lower().strip()
+            # .суд тест / .судтест / .суд test / .court test / .суд пинг / .суд ping
+            if low in (".суд тест", ".судтест", ".суд test", ".court test", ".judge test", "/суд тест", "!суд тест"):
+                self.log(f"Тестовая команда: {raw} account={account}")
+                # peer для ответа — текущий чат если есть, иначе Избранное
+                test_peer = getattr(params, "peer", None) or getattr(params, "dialog_id", None)
+                if test_peer is None:
+                    try:
+                        from client_utils import get_last_fragment
+                        frag = get_last_fragment(account)
+                        if frag:
+                            test_peer = frag.getDialogId() if hasattr(frag, "getDialogId") else None
+                    except:
+                        pass
+                # если не нашли — уйдёт в Избранное внутри _run_fake_test
+                try:
+                    from client_utils import run_on_queue, PLUGINS_QUEUE
+                    run_on_queue(lambda: self._run_fake_test(account, test_peer), PLUGINS_QUEUE)
+                except:
+                    from client_utils import run_on_queue
+                    run_on_queue(lambda: self._run_fake_test(account, test_peer))
+                return HookResult(strategy=HookStrategy.CANCEL)
+
+            if low in (".суд пинг", ".суд ping", ".court ping", ".judge ping", "/суд пинг"):
+                self.log(f"Пинг LLM: {raw} account={account}")
+                ping_peer = getattr(params, "peer", None) or getattr(params, "dialog_id", None)
+                if ping_peer is None:
+                    try:
+                        from client_utils import get_last_fragment
+                        frag = get_last_fragment(account)
+                        if frag:
+                            ping_peer = frag.getDialogId() if hasattr(frag, "getDialogId") else None
+                    except:
+                        pass
+                try:
+                    from client_utils import run_on_queue, PLUGINS_QUEUE
+                    run_on_queue(lambda: self._run_llm_ping(account, ping_peer), PLUGINS_QUEUE)
+                except:
+                    from client_utils import run_on_queue
+                    run_on_queue(lambda: self._run_llm_ping(account, ping_peer))
+                return HookResult(strategy=HookStrategy.CANCEL)
 
             parsed = parse_sud_command(raw)
             if not parsed:
@@ -262,6 +346,107 @@ class AIJudgePlugin(BasePlugin):
         # дефолт — Избранное
         sp = self._get_saved_peer(account)
         return sp if sp is not None else original_peer
+
+    # ---------- тестирование ----------
+    FAKE_MESSAGES = [
+        {"id": 1001, "from_id": 101, "from_name": "Тестер А", "text": "Земля плоская, я видел видос на ютубе где horizon ровный", "date": 0},
+        {"id": 1002, "from_id": 202, "from_name": "Тестер Б", "text": "Земля — почти сфера. Это измерял ещё Эратосфен в 240 году до н.э., подтверждается спутниками и кругосветками", "date": 0},
+        {"id": 1003, "from_id": 101, "from_name": "Тестер А", "text": "Но NASA врет, все фото Земли — фотошоп, я не верю", "date": 0},
+        {"id": 1004, "from_id": 202, "from_name": "Тестер Б", "text": "Фотошоп не объясняет тень Земли на Луне при лунном затмении — она всегда круглая. И GPS не работал бы на плоской", "date": 0},
+        {"id": 1005, "from_id": 101, "from_name": "Тестер А", "text": "А как тогда Boeing летает по прямой если Земля круглая? Должен же падать", "date": 0},
+        {"id": 1006, "from_id": 202, "from_name": "Тестер Б", "text": "Самолёт летит по геодезической — кратчайший путь на сфере, это учитывает инерциальная система и притяжение", "date": 0},
+    ]
+
+    def _run_fake_test(self, account: int, peer_hint=None):
+        """Синтетический суд без реального чата — проверка всего пайплайна"""
+        is_stealth = bool(self.get_setting("stealth_mode", False))
+        # куда слать: peer_hint = чат где написали .суд тест; если стелс — переводим в Избранное как в _run_court
+        if peer_hint is not None:
+            if is_stealth:
+                target = self._resolve_stealth_target(account, peer_hint)
+            else:
+                target = peer_hint
+        else:
+            target = self._get_saved_peer(account)
+            is_stealth = True  # без чата (кнопка в настройках) — только в Избранное
+        if target is None:
+            target = self._get_saved_peer(account) or 0
+            if target == 0:
+                try:
+                    from ui.bulletin import BulletinHelper
+                    BulletinHelper.show_info("❌ Тест: не найден peer для отправки. Открой Избранное и попробуй снова")
+                except:
+                    pass
+                self.log("Fake test: no target peer")
+                return
+
+        self.log(f"🧪 Fake test start account={account} target={target}")
+        self._safe_send(account, target, "🧪 <b>Тестовый суд запущен</b>\nПроверяю анонимизацию + LLM…\n<i>Синтетический срач: плоская vs круглая Земля</i>", None, parse_mode="HTML")
+
+        messages = list(self.FAKE_MESSAGES)
+        # анонимизация ВСЕГДА включена (нельзя выключить)
+        anon_transcript, mapping, reverse, participants = self._anonymize(messages, [])
+        self.log(f"Fake anonymized: {mapping} -> {participants}")
+
+        # проверка что судья не видит имена
+        anon_check = "Тестер" not in anon_transcript and "Сторона" in anon_transcript
+        self._safe_send(account, target, f"🔒 Анонимизация: <b>{'OK' if anon_check else 'FAIL'}</b>\nСудья видит:\n<blockquote expandable>{anon_transcript.replace('<','&lt;')}</blockquote>\nУчастники: {', '.join(participants)}", None, parse_mode="HTML")
+        if not anon_check:
+            self._safe_send(account, target, "❌ <b>Критическая ошибка:</b> реальные имена утекли в транскрипт!", None, parse_mode="HTML")
+            return
+
+        verdict_json, raw = self._call_llm(anon_transcript, participants)
+        if verdict_json is None:
+            self._safe_send(account, target, f"❌ <b>LLM не ответил / вернул не JSON</b>\nПроверь API ключ, Base URL, модель в настройках.\n\nОтвет:\n<code>{(raw or 'пусто')[:1200].replace('<','&lt;')}</code>\n\nЛог: смотри adb logcat | grep 'ИИ Суд'", None, parse_mode="HTML")
+            return
+
+        # форматируем как реальный вердикт, но с пометкой ТЕСТ
+        fake_peer =  -100999999  # фейковый id для шапки
+        final = self._format_verdict(verdict_json, raw, mapping, reverse, participants, messages, anon_transcript, len(messages), fake_peer, 999)
+        final = "🧪 <b>ТЕСТОВЫЙ ВЕРДИКТ (синтетика)</b> — плагин работает!\n<i>Это фейковый срач для проверки пайплайна. Реальные ники были скрыты.</i>\n\n" + final
+        self._safe_send(account, target, final, None, parse_mode="HTML")
+        self.log("Fake test done")
+
+    def _run_llm_ping(self, account: int, peer_hint=None):
+        is_stealth = bool(self.get_setting("stealth_mode", False))
+        if peer_hint is not None and is_stealth:
+            target = self._resolve_stealth_target(account, peer_hint)
+        elif peer_hint is not None:
+            target = peer_hint
+        else:
+            target = self._get_saved_peer(account)
+        if target is None:
+            target = self._get_saved_peer(account) or 0
+        if target == 0:
+            self.log("LLM ping: no target")
+            return
+        api_key = (self.get_setting("api_key", "") or "").strip()
+        base_url = (self.get_setting("base_url", DEFAULT_BASE_URL) or DEFAULT_BASE_URL).strip()
+        model = (self.get_setting("model", DEFAULT_MODEL) or DEFAULT_MODEL).strip()
+        if not api_key:
+            self._safe_send(account, target, "❌ <b>LLM пинг: нет API ключа</b>\nЗаполни в Настройки → Плагины → ИИ Судья", None, parse_mode="HTML")
+            return
+        self._safe_send(account, target, f"🔍 <b>Пинг LLM</b> → <code>{base_url}</code>\nМодель: <code>{model}</code>\nОтправляю тестовый запрос…", None, parse_mode="HTML")
+        # минимальный промпт
+        try:
+            import requests, json as js
+            url = base_url.rstrip("/") + "/chat/completions"
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {"model": model, "messages": [{"role": "user", "content": "Ответь одним словом: pong"}], "temperature": 0}
+            r = requests.post(url, headers=headers, json=payload, timeout=18)
+            body = r.text[:1500]
+            if r.status_code == 200:
+                try:
+                    j = r.json()
+                    ans = j["choices"][0]["message"]["content"]
+                    self._safe_send(account, target, f"✅ <b>LLM OK</b> ({r.status_code})\nМодель ответила: <code>{str(ans)[:500].replace('<','&lt;')}</code>\n\nМожешь запускать <code>.суд тест</code>", None, parse_mode="HTML")
+                except Exception as e:
+                    self._safe_send(account, target, f"⚠️ LLM вернул 200 но не распарсился:\n<code>{body.replace('<','&lt;')}</code>", None, parse_mode="HTML")
+            else:
+                self._safe_send(account, target, f"❌ <b>LLM ошибка HTTP {r.status_code}</b>\n<code>{body.replace('<','&lt;')}</code>\nПроверь ключи/URL/модель", None, parse_mode="HTML")
+        except Exception as e:
+            self._safe_send(account, target, f"❌ <b>LLM пинг упал</b>: {str(e)[:1000].replace('<','&lt;')}", None, parse_mode="HTML")
+            self.log(f"LLM ping err {e}")
 
     # ---------- core logic ----------
     def _run_court(self, account: int, peer_id: int, reply_msg_id: int, mentions: List[str], limit: int):
