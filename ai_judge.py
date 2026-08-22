@@ -11,7 +11,7 @@ __id__ = "ai_judge"
 __name__ = "ИИ Судья"
 __description__ = "Команда `.суд @user1 @user2 50` — вызывает ИИ-судью. Берёт N сообщений ПОСЛЕ реплая, анонимизирует участников и выносит вердикт кто прав. Стелс-мод + тесты."
 __author__ = "@you"
-__version__ = "1.0.19"
+__version__ = "1.0.20"
 __icon__ = "exteraPlugins/1"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.0"
@@ -1939,34 +1939,32 @@ class AIJudgePlugin(BasePlugin):
 
             conf_line = f" (уверенность {confidence}%)" if isinstance(confidence, int) or (isinstance(confidence, str) and confidence.isdigit()) else ""
 
-            body = f"{header}\n{anon_note}\n{meta}\n{participants_line}\n\n{winner_line}{conf_line}\n\n<b>Кратко:</b> {verdict_short}\n\n<b>Разбор:</b>\n{reasoning}"
-
+            # снаружи — только вердикт, всё остальное внутри expandable blockquote как просил
+            outer = f"{header}\n\n{winner_line}{conf_line}\n\n<b>Вердикт:</b> {verdict_short}"
+            inner = f"{anon_note}\n{meta}\n{participants_line}\n\n<b>Разбор:</b>\n{reasoning}"
             if facts:
                 facts_s = "\n".join([f"• {deanon(str(x))}" for x in facts[:6]])
-                body += f"\n\n<b>Факты:</b>\n{facts_s}"
+                inner += f"\n\n<b>Факты:</b>\n{facts_s}"
             if sources:
                 src_s = "\n".join([f"• {str(x)}" for x in sources[:6]])
-                body += f"\n\n<b>Источники для проверки:</b>\n{src_s}"
+                inner += f"\n\n<b>Источники для проверки:</b>\n{src_s}"
             if advice:
-                body += f"\n\n<b>Совет:</b> {advice}"
-
-            # макросы для копирования — подсказка
-            body += f"\n\n<i>Макросы: {{{{winner}}}}={winner_human}, {{{{count}}}}={len(messages)}</i>"
-
-            # переписку показываем только если явно включено И только в Избранное (стелс), чтобы не палить чат
+                inner += f"\n\n<b>Совет:</b> {advice}"
+            inner += f"\n\n<i>Макросы: {{{{winner}}}}={winner_human}, {{{{count}}}}={len(messages)}</i>"
             if self.get_setting("show_transcript", False) and stealth:
                 safe_trans = transcript.replace("<", "&lt;").replace(">", "&gt;")
-                body += f"\n\n<blockquote expandable>Анонимизированный транскрипт (только в Избранном):\n{safe_trans}</blockquote>"
-
+                inner += f"\n\nАнонимизированный транскрипт (только в Избранном):\n{safe_trans}"
+            body = outer + f"\n\n<blockquote expandable>{inner}</blockquote>"
             return body
         else:
-            # fallback — показываем сырой ответ LLM
+            # fallback — тоже вердикт снаружи, сырой ответ внутри blockquote
             safe_raw = (raw_llm or "нет ответа").replace("<", "&lt;").replace(">", "&gt;")
-            # обрежем
             if len(safe_raw) > 3500:
                 safe_raw = safe_raw[:3500] + "…"
             participants_line = participants_line or ""
-            return f"{header}\n{anon_note}\n{meta}\n{participants_line}\n\n⚠️ Судья вернул не-JSON, показываю как есть:\n\n{safe_raw}"
+            outer = f"{header}\n\n⚠️ Судья вернул не-JSON"
+            inner = f"{anon_note}\n{meta}\n{participants_line}\n\n{safe_raw}"
+            return outer + f"\n\n<blockquote expandable>{inner}</blockquote>"
 
     def _send_status(self, account, peer_id, text, reply_id):
         self._safe_send(account, peer_id, text, reply_id, parse_mode="HTML")

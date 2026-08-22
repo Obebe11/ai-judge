@@ -8,7 +8,7 @@
 ![SDK](https://img.shields.io/badge/SDK-1.4.3.0%2B-green)
 ![Python](https://img.shields.io/badge/Python-3.11-yellow)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
-![Version](https://img.shields.io/badge/version-1.0.19-orange)
+![Version](https://img.shields.io/badge/version-1.0.20-orange)
 
 ---
 
@@ -344,6 +344,7 @@ MIT — делай что хочешь, но суд должен остават�
 
 ## 📝 История версий
 
+- **v1.0.20** — Всё кроме вердикта в `<blockquote expandable>`: `outer = header+winner+verdict` снаружи, `inner = anon_note+meta+разбор+факты+источники+совет+макросы` внутри `blockquote`
 - **v1.0.19** — Не показывает переписку: `show_transcript=False` по дефолту, если вкл — только в `Избранное` при `стелс`, вердикт без `blockquote` в чате
 - **v1.0.18** — Стелс без следов: `stealth=True` → `CANCEL` (команда удаляется бесследно), `stealth=False` → `MODIFY '"Суд запущен"'` — тестируй в реале без засорения
 - **v1.0.17** — Логи по дефолту **файлом** в `Избранное` (не `HTML` блок), `.суд логи` → `ai_judge_logs.txt` как документ, `txt`/`файл` тоже файлом
